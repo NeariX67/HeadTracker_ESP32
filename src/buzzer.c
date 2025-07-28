@@ -90,11 +90,11 @@ static inline void SET_BUZZER_OFF(void)
  */
 void buzzer_set_state(buzzer_state_t state, uint32_t on_time_ms, uint32_t off_time_ms)
 {
-    buzzer.state = state;             // 设置蜂鸣器状态
-    buzzer.on_time_ms = on_time_ms;   // 设置响的时间
-    buzzer.off_time_ms = off_time_ms; // 设置间隔时间
-    buzzer.elapsed_time_ms = 0;       // 重置已过时间计数
-    SET_BUZZER_OFF();                 // 设置引脚为低电平关闭蜂鸣器
+    buzzer.state = state;             // Set buzzer state
+    buzzer.on_time_ms = on_time_ms;   // Set ON time
+    buzzer.off_time_ms = off_time_ms; // Set interval time
+    buzzer.elapsed_time_ms = 0;       // Reset elapsed time counter
+    SET_BUZZER_OFF();                 // Set pin to low level to turn off buzzer
 }
 
 /**
@@ -122,7 +122,7 @@ void buzzer_play_tone_sequence(const buzzer_tone_t *tones, size_t tone_count)
  */
 void buzzer_update(uint32_t delta_time_ms)
 {
-    buzzer.elapsed_time_ms += delta_time_ms; // 累计已过时间
+    buzzer.elapsed_time_ms += delta_time_ms; // Accumulate elapsed time
 
     if (tone_sequence.tones && tone_sequence.current_tone < tone_sequence.tone_count)
     {
@@ -156,31 +156,31 @@ void buzzer_update(uint32_t delta_time_ms)
     switch (buzzer.state)
     {
     case BUZZER_OFF:
-        SET_BUZZER_OFF(); // 确保蜂鸣器关闭
+        SET_BUZZER_OFF(); // Ensure buzzer is off
         break;
 
     case BUZZER_SINGLE:
         if (buzzer.elapsed_time_ms < buzzer.on_time_ms)
         {
-            SET_BUZZER_ON(); // 持续响
+            SET_BUZZER_ON(); // Continuous beep
         }
         else
         {
-            SET_BUZZER_OFF();          // 超过设定时间后关闭
-            buzzer.state = BUZZER_OFF; // 单次响后自动切换为关闭状态
+            SET_BUZZER_OFF();          // Turn off after set time
+            buzzer.state = BUZZER_OFF; // Automatically switch to off state after single beep
         }
         break;
 
     case BUZZER_REPEAT:
         if (buzzer.is_on && buzzer.elapsed_time_ms >= buzzer.on_time_ms)
         {
-            SET_BUZZER_OFF();           // 结束响并关闭
-            buzzer.elapsed_time_ms = 0; // 重置时间计数
+            SET_BUZZER_OFF();           // End beep and turn off
+            buzzer.elapsed_time_ms = 0; // Reset time counter
         }
         else if (!buzzer.is_on && buzzer.elapsed_time_ms >= buzzer.off_time_ms)
         {
-            SET_BUZZER_ON();            // 开始响
-            buzzer.elapsed_time_ms = 0; // 重置时间计数
+            SET_BUZZER_ON();            // Start beep
+            buzzer.elapsed_time_ms = 0; // Reset time counter
         }
         break;
     default:

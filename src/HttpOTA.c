@@ -12,12 +12,12 @@ static bool OTA_Mode_flag = false;
 
 httpd_handle_t HttpOTA_httpd = NULL;
 
-/* 单个文件的最大大小*/
+/* Maximum size of a single file */
 #define MAX_FILE_SIZE (1024 * 1024) // 1024 KB
 #define MAX_FILE_SIZE_STR "1024KB"
-/* 暂存缓冲区大小*/
+/* Temporary buffer size */
 #define SCRATCH_BUFSIZE 1024
-/* SHA-256 长度 */
+/* SHA-256 length */
 #define HASH_LEN 32
 
 bool get_OTA_Mode(void)
@@ -30,7 +30,7 @@ void set_OTA_Mode(bool true_or_false)
     OTA_Mode_flag = true_or_false;
 }
 
-// 创建WiFi热点
+// Create WiFi hotspot
 void wifi_init_ap(void)
 {
     esp_err_t ret;
@@ -74,43 +74,43 @@ static void print_sha256(const uint8_t *image_hash, const char *label)
     // }
     // ESP_LOGI(TAG, "%s: %s", label, hash_print);
 }
-// 设置一个gpio为高来判断是否启动成功 gpio2内部下拉
+// Set a GPIO high to determine if startup is successful, GPIO2 internal pull-down
 #define CONFIG_EXAMPLE_GPIO_DIAGNOSTIC 2
 static bool diagnostic(void)
 {
     return true;
 }
-// 校验当前固件
+// Verify current firmware
 void firmware_Sha256()
 {
     uint8_t sha_256[HASH_LEN] = {0};
     esp_partition_t partition;
 
-    // 获取分区表的sha256摘要
+    // Get SHA256 digest of partition table
     partition.address = ESP_PARTITION_TABLE_OFFSET;
     partition.size = ESP_PARTITION_TABLE_MAX_LEN;
     partition.type = ESP_PARTITION_TYPE_DATA;
     esp_partition_get_sha256(&partition, sha_256);
-    print_sha256(sha_256, "分区表SHA-256: ");
+    print_sha256(sha_256, "Partition table SHA-256: ");
 
-    // 为启动加载程序获取sha256摘要
+    // Get SHA256 digest for bootloader
     partition.address = ESP_BOOTLOADER_OFFSET;
     partition.size = ESP_PARTITION_TABLE_OFFSET;
     partition.type = ESP_PARTITION_TYPE_APP;
     esp_partition_get_sha256(&partition, sha_256);
-    print_sha256(sha_256, "引导程序SHA-256: ");
+    print_sha256(sha_256, "Bootloader SHA-256: ");
 
-    // 获取sha256摘要以运行分区
+    // Get SHA256 digest for running partition
     esp_partition_get_sha256(esp_ota_get_running_partition(), sha_256);
-    print_sha256(sha_256, "当前固件SHA-256: ");
+    print_sha256(sha_256, "Current firmware SHA-256: ");
 
     const esp_partition_t *running_partition = esp_ota_get_running_partition();
     esp_ota_img_states_t ota_state;
     if (esp_ota_get_state_partition(running_partition, &ota_state) == ESP_OK)
     {
         if (ota_state == ESP_OTA_IMG_PENDING_VERIFY)
-        { // 该固件首次启动
-            // 运行诊断功能...
+        { // This firmware first startup
+            // Run diagnostic function...
             bool diagnostic_is_ok = diagnostic();
             if (diagnostic_is_ok)
             {
@@ -129,11 +129,11 @@ void firmware_Sha256()
     const esp_partition_t *running = esp_ota_get_running_partition();
 
     // if (configured != running) {
-    //     ESP_LOGW(TAG, "在偏移处 0x%08x 配置的OTA引导分区,但从偏移量 0x%08x 开始",
+    //     ESP_LOGW(TAG, "Configured OTA boot partition at offset 0x%08x, but running from offset 0x%08x",
     //              configured->address, running->address);
-    //     ESP_LOGW(TAG, "(如果OTA启动数据或首选启动映像因某种原因损坏，则可能会发生这种情况。)");
+    //     ESP_LOGW(TAG, "(This can happen if either the OTA boot data or preferred boot image become corrupted somehow.)");
     // }
-    // ESP_LOGI(TAG, "运行分区类型 %s 子类型 %#x (offset 0x%08x)", running->type?"DATA":"APP", running->subtype, running->address);
+    // ESP_LOGI(TAG, "Running partition type %s subtype %#x (offset 0x%08x)", running->type?"DATA":"APP", running->subtype, running->address);
 
     esp_app_desc_t running_app_info;
     if (esp_ota_get_partition_description(running, &running_app_info) == ESP_OK)
@@ -143,41 +143,41 @@ void firmware_Sha256()
     }
 }
 
-/*将文件上传到服务器的处理程序*/
+/* Handler for uploading files to server */
 uint8_t Upload_Timeout_num;
 static esp_err_t upload_post_handler(httpd_req_t *req)
 {
-    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*"); // 跨域传输协议
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*"); // Cross-origin transfer protocol
     esp_err_t err;
     esp_ota_handle_t update_handle = 0;
     const esp_partition_t *update_partition = NULL;
     char SendStr[100];
     Upload_Timeout_num = 0;
-    /* 文件不能大于限制*/
+    /* File cannot be larger than the limit */
     if (req->content_len > MAX_FILE_SIZE)
     {
         ESP_LOGE(TAG, "File too big : %d bytes", req->content_len);
-        /* 回应400错误请求 */
+        /* Respond with 400 Bad Request */
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
                             "File size must be less than" MAX_FILE_SIZE_STR "!");
-        /* 返回失败以关闭基础连接，否则传入的文件内容将使套接字繁忙 */
+        /* Return failure to close underlying connection else the incoming file content will jam the socket */
         return ESP_FAIL;
     }
-    /*请求的内容长度给出了要上传的文件的大小*/
+    /* Content length of the request gives the size of the file being uploaded */
     int remaining = req->content_len;
     int received, L_remaining = remaining;
-    bool image_header_was_checked = false; // 固件头检查标识
+    bool image_header_was_checked = false; // Firmware header check flag
     char *OTA_buf = malloc(sizeof(char) * SCRATCH_BUFSIZE);
     while (remaining > 0)
     {
-        /* 将文件部分接收到缓冲区中 */
+        /* Receive file part into buffer */
         if ((received = httpd_req_recv(req, OTA_buf, MIN(remaining, SCRATCH_BUFSIZE))) <= 0)
         {
             if (received == HTTPD_SOCK_ERR_TIMEOUT)
             {
                 Upload_Timeout_num++;
                 ESP_LOGE(TAG, "Receive overtime %d", Upload_Timeout_num);
-                /* 如果发生超时，请重试 */
+                /* Retry if timeout occurs */
                 if (Upload_Timeout_num >= 3)
                 {
                     Upload_Timeout_num = 0;
@@ -187,20 +187,20 @@ static esp_err_t upload_post_handler(httpd_req_t *req)
                 }
                 continue;
             }
-            /* 如果出现无法恢复的错误，请关闭并删除未完成的文件*/
+            /* In case of unrecoverable error, close and delete the unfinished file */
             free(OTA_buf);
             ESP_LOGE(TAG, "File receive filed");
-            /* 响应500内部服务器错误 */
+            /* Respond with 500 Internal Server Error */
             httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Unable to receive file!");
             if (update_handle)
-                esp_ota_end(update_handle); // 若已begin OTA则停止OTA
+                esp_ota_end(update_handle); // If OTA has begun, stop OTA
             return ESP_FAIL;
         }
-        /*固件头校验*/
-        // 接收到固件头
+        /* Firmware header verification */
+        // Firmware header received
         if (image_header_was_checked == false)
         {
-            esp_app_desc_t new_app_info; // 存储新固件头
+            esp_app_desc_t new_app_info; // Store new firmware header
             if (received > sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t) + sizeof(esp_app_desc_t))
             {
 
@@ -211,14 +211,14 @@ static esp_err_t upload_post_handler(httpd_req_t *req)
                     ESP_LOGI(TAG, "Current firmware version: %s", running_app_info.version);
                     ESP_LOGI(TAG, "Comeplie time %s,%s", running_app_info.date, running_app_info.time);
                 }
-                // 通过下载检查新固件版本
+                // Check new firmware version by download
                 memcpy(&new_app_info, &OTA_buf[sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t)], sizeof(esp_app_desc_t));
 #ifdef HEADTRACKER
-                if (strstr(new_app_info.version, "HT_") == NULL) // 版本错误
+                if (strstr(new_app_info.version, "HT_") == NULL) // Version error
 #elif defined RECEIVER
-                if (strstr(new_app_info.version, "RX_") == NULL) // 版本错误
+                if (strstr(new_app_info.version, "RX_") == NULL) // Version error
 #else
-                if (strstr(new_app_info.version, "TEST_") == NULL) // 版本错误
+                if (strstr(new_app_info.version, "TEST_") == NULL) // Version error
 #endif
                 {
                     ESP_LOGE(TAG, "Firmware header error!");
@@ -228,8 +228,8 @@ static esp_err_t upload_post_handler(httpd_req_t *req)
                 ESP_LOGI(TAG, "New firmware version: %s", new_app_info.version);
                 ESP_LOGI(TAG, "New firmware complie time: %s, %s", new_app_info.date, new_app_info.time);
 
-                // 返回下一个应使用新固件写入的OTA应用程序分区
-                // esp_ota_get_next_update_partition 自动选择下一个可用ota分区
+                // Return next OTA app partition which should be written with new firmware
+                // esp_ota_get_next_update_partition automatically selects next available OTA partition
                 update_partition = esp_ota_get_next_update_partition(NULL);
                 if (update_partition == NULL)
                 {
@@ -240,7 +240,7 @@ static esp_err_t upload_post_handler(httpd_req_t *req)
                         update_partition->subtype - ESP_PARTITION_SUBTYPE_APP_OTA_MIN,
                         new_app_info.version, new_app_info.date, new_app_info.time);
 
-                // 开始OTA OTA_SIZE_UNKNOWN将擦除整个分区
+                // Begin OTA, OTA_SIZE_UNKNOWN will erase entire partition
                 err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &update_handle);
                 if (err != ESP_OK)
                 {
@@ -252,7 +252,7 @@ static esp_err_t upload_post_handler(httpd_req_t *req)
                 }
                 ESP_LOGI(TAG, "esp_ota_begin succeeded");
 
-                image_header_was_checked = true; // 固件头验证完成 可自行添加版本比对
+                image_header_was_checked = true; // Firmware header verification complete, version comparison can be added manually
             }
             else
             {
@@ -260,7 +260,7 @@ static esp_err_t upload_post_handler(httpd_req_t *req)
                 return ESP_FAIL;
             }
         }
-        /*将固件分块写入OTA分区*/
+        /* Write firmware chunks to OTA partition */
         err = esp_ota_write(update_handle, (const void *)OTA_buf, received);
         if (err != ESP_OK)
         {
@@ -271,7 +271,7 @@ static esp_err_t upload_post_handler(httpd_req_t *req)
             return ESP_FAIL;
         }
 
-        /*跟踪剩余要上传的文件的剩余大小*/
+        /* Keep track of remaining size of the file left to be uploaded */
         remaining -= received;
     }
     free(OTA_buf);
@@ -303,7 +303,7 @@ static esp_err_t upload_post_handler(httpd_req_t *req)
     }
     // httpd_resp_sendstr(req, "OTA successfully");
     httpd_resp_sendstr(req, SendStr);
-    vTaskDelay(500 / portTICK_PERIOD_MS); // 延时等待消息发送
+    vTaskDelay(500 / portTICK_PERIOD_MS); // Delay to wait for message transmission
     ESP_LOGI(TAG, "Ready to reboot.");
     esp_restart();
     return ESP_OK;
@@ -312,7 +312,7 @@ static esp_err_t upload_post_handler(httpd_req_t *req)
 // Configurator page
 static esp_err_t Configurator_handler(httpd_req_t *req)
 {
-    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*"); // 跨域传输协议
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*"); // Cross-origin transfer protocol
 
     extern const unsigned char Configurator_html_gz_start[] asm("_binary_Configurator_html_gz_start");
     extern const unsigned char Configurator_html_gz_end[] asm("_binary_Configurator_html_gz_end");
@@ -325,7 +325,7 @@ static esp_err_t Configurator_handler(httpd_req_t *req)
 
 static esp_err_t getParams_handler(httpd_req_t *req)
 {
-    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*"); // 跨域传输协议
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*"); // Cross-origin transfer protocol
 
     cJSON *json_str = nvs_to_json();
     if (json_str == NULL)
@@ -344,7 +344,7 @@ static esp_err_t getParams_handler(httpd_req_t *req)
 
 esp_err_t saveparams_handler(httpd_req_t *req)
 {
-    // 1. 读取POST数据
+    // 1. Read POST data
     int total_len = req->content_len;
     char *buf = malloc(total_len + 1);
     if (!buf)
@@ -366,7 +366,7 @@ esp_err_t saveparams_handler(httpd_req_t *req)
     }
     buf[total_len] = 0;
 
-    // 2. 解析JSON
+    // 2. Parse JSON
     cJSON *json = cJSON_Parse(buf);
     free(buf);
     if (!json)
@@ -375,11 +375,11 @@ esp_err_t saveparams_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    // 3. 保存到NVS
+    // 3. Save to NVS
     json_to_nvs(json);
     cJSON_Delete(json);
 
-    // 4. 返回结果
+    // 4. Return result
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, "{\"success\":true}");
 
@@ -388,19 +388,19 @@ esp_err_t saveparams_handler(httpd_req_t *req)
 
 esp_err_t resetToDefaults_handler(httpd_req_t *req)
 {
-    // 调用恢复默认值的函数
+    // Call function to restore default values
     trkset_restore_defaults();
 
-    // 返回 JSON 成功响应
+    // Return JSON success response
     httpd_resp_set_type(req, "application/json");
     const char *response = "{\"success\":true}";
     return httpd_resp_send(req, response, strlen(response));
 }
 
-// OTA 页面
+// OTA page
 static esp_err_t HttpOTA_handler(httpd_req_t *req)
 {
-    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*"); // 跨域传输协议
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*"); // Cross-origin transfer protocol
 
     extern const unsigned char HttpOTA_html_gz_start[] asm("_binary_HttpOTA_html_gz_start");
     extern const unsigned char HttpOTA_html_gz_end[] asm("_binary_HttpOTA_html_gz_end");
@@ -411,10 +411,10 @@ static esp_err_t HttpOTA_handler(httpd_req_t *req)
     return httpd_resp_send(req, (const char *)HttpOTA_html_gz_start, HttpOTA_html_gz_len);
 }
 
-// 当前固件信息
+// Current firmware information
 static esp_err_t Now_handler(httpd_req_t *req)
 {
-    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*"); // 跨域传输协议
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*"); // Cross-origin transfer protocol
 
     static char json_response[1024];
 
@@ -424,28 +424,28 @@ static esp_err_t Now_handler(httpd_req_t *req)
 
     char *p = json_response;
     *p++ = '{';
-    p += sprintf(p, "\"OTAsubtype\":%d,", running->subtype - ESP_PARTITION_SUBTYPE_APP_OTA_MIN); // OTA分区
-    p += sprintf(p, "\"address\":%lu,", running->address);                                       // 地址
-    p += sprintf(p, "\"version\":\"%s\",", running_app_info.version);                            // 版本号
-    p += sprintf(p, "\"date\":\"%s\",", running_app_info.date);                                  // 日期
-    p += sprintf(p, "\"time\":\"%s\"", running_app_info.time);                                   // 时间
+    p += sprintf(p, "\"OTAsubtype\":%d,", running->subtype - ESP_PARTITION_SUBTYPE_APP_OTA_MIN); // OTA partition
+    p += sprintf(p, "\"address\":%lu,", running->address);                                       // Address
+    p += sprintf(p, "\"version\":\"%s\",", running_app_info.version);                            // Version number
+    p += sprintf(p, "\"date\":\"%s\",", running_app_info.date);                                  // Date
+    p += sprintf(p, "\"time\":\"%s\"", running_app_info.time);                                   // Time
     *p++ = '}';
     *p++ = 0;
 
-    httpd_resp_set_type(req, "application/json");                      // 设置http响应类型
-    return httpd_resp_send(req, json_response, strlen(json_response)); // 发送一个完整的HTTP响应。内容在json_response中
+    httpd_resp_set_type(req, "application/json");                      // Set HTTP response type
+    return httpd_resp_send(req, json_response, strlen(json_response)); // Send a complete HTTP response. Content is in json_response
 }
 
 void HttpOTA_server_init()
 {
-    wifi_init_ap(); // 创建WiFi热点
+    wifi_init_ap(); // Create WiFi hotspot
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.max_open_sockets = 1;
     config.backlog_conn = 1;
     config.lru_purge_enable = true;
     config.max_uri_handlers = 15;
     config.stack_size = 8192;
-    // /*使用URI通配符匹配功能，以允许同一处理程序响应与通配符方案匹配的多个不同目标URI。*/
+    // /* Use URI wildcard matching function to allow the same handler to respond to multiple different target URIs that match the wildcard scheme. */
     // config.uri_match_fn = httpd_uri_match_wildcard;
 
     config.server_port = 80;
@@ -469,34 +469,34 @@ void HttpOTA_server_init()
         httpd_register_uri_handler(HttpOTA_httpd, &getParams_uri);
 
         httpd_uri_t saveparams_uri = {
-                                     .uri = "/api/saveParams",
-                                     .method = HTTP_POST,
-                                     .handler = saveparams_handler,
-                                     .user_ctx = NULL};
+            .uri = "/api/saveParams",
+            .method = HTTP_POST,
+            .handler = saveparams_handler,
+            .user_ctx = NULL};
         httpd_register_uri_handler(HttpOTA_httpd, &saveparams_uri);
 
         httpd_uri_t resetToDefaults_uri = {
-                                     .uri = "/api/resetToDefaults",
-                                     .method = HTTP_POST,
-                                     .handler = resetToDefaults_handler,
-                                     .user_ctx = NULL};
+            .uri = "/api/resetToDefaults",
+            .method = HTTP_POST,
+            .handler = resetToDefaults_handler,
+            .user_ctx = NULL};
         httpd_register_uri_handler(HttpOTA_httpd, &resetToDefaults_uri);
 
-        httpd_uri_t HttpOTA_uri = {// OTA页面
+        httpd_uri_t HttpOTA_uri = {// OTA page
                                    .uri = "/OTA",
                                    .method = HTTP_GET,
                                    .handler = HttpOTA_handler,
                                    .user_ctx = NULL};
         httpd_register_uri_handler(HttpOTA_httpd, &HttpOTA_uri);
 
-        httpd_uri_t Now_uri = {// 当前固件信息
+        httpd_uri_t Now_uri = {// Current firmware information
                                .uri = "/Now",
                                .method = HTTP_GET,
                                .handler = Now_handler,
                                .user_ctx = NULL};
         httpd_register_uri_handler(HttpOTA_httpd, &Now_uri);
 
-        /* URI处理程序，用于将文件上传到服务器*/
+        /* URI handler for uploading files to server */
         httpd_uri_t file_upload = {
             .uri = "/upload",
             .method = HTTP_POST,

@@ -567,7 +567,7 @@ void trkset_init()
 
 void trkset_restore_defaults()
 {
-    // 恢复trkset结构体为默认值
+    // Restore trkset structure to default values
     trkset.v.rollReverse = 0;
     trkset.v.tiltReverse = 0;
     trkset.v.panReverse = 0;
@@ -603,16 +603,17 @@ void trkset_restore_defaults()
     trkset.v.ppmchcnt = 8;
     trkset.v.btmode = 0;
 
-    // 擦除NVS命名空间
+    // Erase NVS namespace
     nvs_handle_t handle;
-    if (nvs_open(SETTINGS_NVS_NAMESPACE, NVS_READWRITE, &handle) == ESP_OK) {
+    if (nvs_open(SETTINGS_NVS_NAMESPACE, NVS_READWRITE, &handle) == ESP_OK)
+    {
         ESP_LOGI("trkset", "Erasing NVS namespace: %s", SETTINGS_NVS_NAMESPACE);
         nvs_erase_all(handle);
         nvs_commit(handle);
         nvs_close(handle);
     }
 
-    // 重新保存默认值到NVS
+    // Save default values to NVS again
     cJSON *default_json = cJSON_CreateObject();
     cJSON_AddBoolToObject(default_json, ROLL_REV_KEY, trkset.v.rollReverse);
     cJSON_AddBoolToObject(default_json, TILT_REV_KEY, trkset.v.tiltReverse);
