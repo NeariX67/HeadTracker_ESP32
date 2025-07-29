@@ -51,7 +51,7 @@ static uint8_t read_button_GPIO(uint8_t button_id)
         return (touch_value <= TOUCH_TRESHOULD ? 1 : 0);
 #endif
 
-#if defined HT_NANO_V2 || defined HT_SE
+#if defined HT_NANO_V2 || defined HT_SE || defined HT_NEARIX
 #if (GPIO_CENTER_BUTTON_ACTIVE_LEVEL == IO_ACTIVE_LOW)
         return (!gpio_get_level(GPIO_CENTER_BUTTON));
 #else
@@ -221,7 +221,7 @@ void io_Init(void)
 #ifdef HEADTRACKER
     gpio_config_t io_conf = {};
 
-#if defined HT_NANO_V2 || defined HT_SE
+#if defined HT_NANO_V2 || defined HT_SE || defined HT_NEARIX
     // config center button io
     io_conf.intr_type = GPIO_INTR_DISABLE;                   // disable interrupt
     io_conf.mode = GPIO_MODE_INPUT;                          // set as input mode
@@ -319,7 +319,7 @@ void io_Init(void)
 // create io task thread
 #ifdef HT_NANO
     xTaskCreatePinnedToCore(io_Thread, "io_Thread", IO_THREAD_STACK_SIZE_SET, NULL, IO_THREAD_PRIORITY_SET, NULL, 1); // run on core1
-#elif defined HT_NANO_V2 || defined HT_SE
+#elif defined HT_NANO_V2 || defined HT_SE || defined HT_NEARIX
     xTaskCreate(io_Thread, "io_Thread", IO_THREAD_STACK_SIZE_SET, NULL, IO_THREAD_PRIORITY_SET, NULL); // run on core0
 #endif
 #endif

@@ -31,6 +31,14 @@
 #define GPIO_CENTER_BUTTON  GPIO_NUM_3
 #define GPIO_LED_STATUS     GPIO_NUM_1
 #define GPIO_BUZZER         GPIO_NUM_10
+#elif HT_NEARIX
+#define PIN_NUM_MISO        GPIO_NUM_4
+#define PIN_NUM_MOSI        GPIO_NUM_5
+#define PIN_NUM_CLK         GPIO_NUM_6
+#define PIN_NUM_CS          GPIO_NUM_7
+#define GPIO_CENTER_BUTTON  GPIO_NUM_3
+#define GPIO_LED_STATUS     GPIO_NUM_1
+#define GPIO_BUZZER         GPIO_NUM_10
 
 #endif
 
