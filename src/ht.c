@@ -23,6 +23,9 @@ void headtracker_start(void)
 {
     firmware_Sha256(); // Verify current firmware
 
+    ESP_LOGI("ht", "Delaying startup for 9 seconds...");
+    vTaskDelay(pdMS_TO_TICKS(9000));
+
     trkset_init(); // Initialize tracker settings
 
     io_Init();

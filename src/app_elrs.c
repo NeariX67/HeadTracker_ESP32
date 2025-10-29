@@ -16,12 +16,16 @@
 #include "esp_now.h"
 #include "esp_crc.h"
 #include "app_espnow.h"
+#include "msp.h"
+#include "msptypes.h"
 
 #include "trackersettings.h"
 #include "defines.h"
 #include "buzzer.h"
 #include "crc8.h"
 #include "led.h"
+
+char *bytes_to_hex(const uint8_t *data, size_t len);
 
 #define ESPNOW_QUEUE_SIZE 1
 #define ESPNOW_CHANNEL 1 // range 0 to 14
@@ -42,19 +46,19 @@ static uint8_t local_mac[ESP_NOW_ETH_ALEN] = {};
 
 void set_binding_flag(bool flag)
 {
-    ESP_LOGI(TAG, "set_binding_flag");
+    ESP_LOGI(TAG, "set_binding_flag: %d", flag);
     binding_flag = flag;
 }
 
 bool isBinding(void)
 {
-    // ESP_LOGI(TAG, "isBinding");
+    ESP_LOGI(TAG, "isBinding: %d", is_binding_mode);
     return is_binding_mode;
 }
 
 bool isconnected()
 {
-    // ESP_LOGI(TAG, "isconnected");
+    ESP_LOGI(TAG, "isconnected: %d", is_espnow_connected);
     return is_espnow_connected;
 }
 
@@ -188,17 +192,86 @@ uint8_t *esp_now_restore_peer(void)
 #ifdef HEADTRACKER
 static void espnow_send_task()
 {
+
     ESP_LOGI(TAG, "espnow_send_task");
+
+    uint8_t *peer_addr;
+    mspPacket_t frame;
+    size_t data_len;
+    TickType_t xLastWakeTime;
 
     // TODO
 
-    TickType_t xLastWakeTime;
-
     xLastWakeTime = xTaskGetTickCount();
 
+    peer_addr = (uint8_t *)bind_phrase;
+    // peer_addr = esp_now_restore_peer();
+    // if (peer_addr == NULL)
+    // {
+    //     ESP_LOGE(TAG, "ESPNOW peer not found.");
+    //     Handle_elrs_task = NULL;
+    //     vTaskDelete(NULL);
+    // }
+
+    ESP_LOGI(TAG, "Peer Mac: " MACSTR "", MAC2STR(peer_addr));
+
+    // ELRS Backpack: https://github.com/ExpressLRS/Backpack/blob/b5b7675da124fffb4b4399f4d83a6dfb79527f1c/src/module_base.cpp#L65
     for (;;)
     {
-        xTaskDelayUntil(&xLastWakeTime, ESPNOW_SEND_PERIOD * 20);
+        // ESP_LOGI(TAG, "espnow_send_task tick");
+        if (is_binding_mode)
+        {
+            ESP_LOGI(TAG, "In binding mode, skipping data send.");
+            xTaskDelayUntil(&xLastWakeTime, ESPNOW_SEND_PERIOD * 20);
+            continue;
+        }
+
+        mspPacket_reset(&frame);
+        mspPacket_makeCommand(&frame);
+        frame.function = MSP_ELRS_BACKPACK_SET_PTR;
+        // MSP Channel order: Pan, Roll, Tilt
+        // chanl_data order: Roll, Tilt, Pan
+
+        // Pan
+        mspPacket_addByte(&frame, chanl_data[2] & 0xFF);
+        mspPacket_addByte(&frame, (chanl_data[2] >> 8) & 0xFF);
+        // Roll
+        mspPacket_addByte(&frame, chanl_data[0] & 0xFF);
+        mspPacket_addByte(&frame, (chanl_data[0] >> 8) & 0xFF);
+        // Tilt
+        mspPacket_addByte(&frame, chanl_data[1] & 0xFF);
+        mspPacket_addByte(&frame, (chanl_data[1] >> 8) & 0xFF);
+
+        ESP_LOGI(TAG, "Payload size: %d", frame.payloadSize);
+
+        uint8_t packetSize = msp_getTotalPacketSize(&frame);
+        uint8_t data[packetSize];
+        uint8_t result = msp_convertToByteArray(&frame, data);
+        if (!result)
+        {
+            ESP_LOGW(TAG, "msp_convertToByteArray failed");
+            xTaskDelayUntil(&xLastWakeTime, ESPNOW_SEND_PERIOD * 20);
+            continue;
+        }
+
+        ESP_LOGI(TAG, "Sending %d bytes: %s", packetSize, bytes_to_hex(data, packetSize));
+
+        esp_now_send(peer_addr, data, packetSize);
+        if (is_send_failed)
+        {
+            // If send failed, delay 20 times of the period to reduce power consumption.
+            ESP_LOGE(TAG, "Send failed.");
+            is_send_failed = false;
+            is_espnow_connected = false;
+            led_set_status(disconnected);
+            xTaskDelayUntil(&xLastWakeTime, ESPNOW_SEND_PERIOD * 20);
+        }
+        else
+        {
+            is_espnow_connected = true;
+            led_set_status(connected);
+            xTaskDelayUntil(&xLastWakeTime, ESPNOW_SEND_PERIOD * 10);
+        }
     }
 }
 #endif
@@ -292,3 +365,21 @@ void ht_espnow_deinit(void)
 #endif
 
 #endif
+
+char *bytes_to_hex(const uint8_t *data, size_t len)
+{
+    static const char hex_digits[] = "0123456789ABCDEF";
+    size_t out_len = len * 2 + 1;
+    char *out = malloc(out_len);
+    if (!out)
+        return NULL;
+
+    for (size_t i = 0; i < len; i++)
+    {
+        out[i * 2] = hex_digits[(data[i] >> 4) & 0x0F];
+        out[i * 2 + 1] = hex_digits[data[i] & 0x0F];
+    }
+
+    out[len * 2] = '\0'; // Null-terminate
+    return out;
+}
