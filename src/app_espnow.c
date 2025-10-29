@@ -1,4 +1,4 @@
-#ifndef FRAMEWORK_ARDUINO
+#if !defined(FRAMEWORK_ARDUINO) && !defined(USE_ELRS)
 #include <stdlib.h>
 #include <time.h>
 #include <string.h>

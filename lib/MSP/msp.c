@@ -1,6 +1,5 @@
 #include "msp.h"
 
-#include "crc.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 
@@ -20,6 +19,41 @@ n+8     checksum                uint8, (n= payload size), crc8_dvb_s2 checksum
 
 static const char *TAG = "MSP";
 
+// CRC8 lookup table for DVB-S2 polynomial (0xD5)
+static const uint8_t crc8_dvb_s2_table[256] = {
+    0x00, 0xD5, 0x7F, 0xAA, 0xFE, 0x2B, 0x81, 0x54,
+    0x29, 0xFC, 0x56, 0x83, 0xD7, 0x02, 0xA8, 0x7D,
+    0x52, 0x87, 0x2D, 0xF8, 0xAC, 0x79, 0xD3, 0x06,
+    0x7B, 0xAE, 0x04, 0xD1, 0x85, 0x50, 0xFA, 0x2F,
+    0xA4, 0x71, 0xDB, 0x0E, 0x5A, 0x8F, 0x25, 0xF0,
+    0x8D, 0x58, 0xF2, 0x27, 0x73, 0xA6, 0x0C, 0xD9,
+    0xF6, 0x23, 0x89, 0x5C, 0x08, 0xDD, 0x77, 0xA2,
+    0xDF, 0x0A, 0xA0, 0x75, 0x21, 0xF4, 0x5E, 0x8B,
+    0x9D, 0x48, 0xE2, 0x37, 0x63, 0xB6, 0x1C, 0xC9,
+    0xB4, 0x61, 0xCB, 0x1E, 0x4A, 0x9F, 0x35, 0xE0,
+    0xCF, 0x1A, 0xB0, 0x65, 0x31, 0xE4, 0x4E, 0x9B,
+    0xE6, 0x33, 0x99, 0x4C, 0x18, 0xCD, 0x67, 0xB2,
+    0x39, 0xEC, 0x46, 0x93, 0xC7, 0x12, 0xB8, 0x6D,
+    0x10, 0xC5, 0x6F, 0xBA, 0xEE, 0x3B, 0x91, 0x44,
+    0x6B, 0xBE, 0x14, 0xC1, 0x95, 0x40, 0xEA, 0x3F,
+    0x42, 0x97, 0x3D, 0xE8, 0xBC, 0x69, 0xC3, 0x16,
+    0xEF, 0x3A, 0x90, 0x45, 0x11, 0xC4, 0x6E, 0xBB,
+    0xC6, 0x13, 0xB9, 0x6C, 0x38, 0xED, 0x47, 0x92,
+    0xBD, 0x68, 0xC2, 0x17, 0x43, 0x96, 0x3C, 0xE9,
+    0x94, 0x41, 0xEB, 0x3E, 0x6A, 0xBF, 0x15, 0xC0,
+    0x4B, 0x9E, 0x34, 0xE1, 0xB5, 0x60, 0xCA, 0x1F,
+    0x62, 0xB7, 0x1D, 0xC8, 0x9C, 0x49, 0xE3, 0x36,
+    0x19, 0xCC, 0x66, 0xB3, 0xE7, 0x32, 0x98, 0x4D,
+    0x30, 0xE5, 0x4F, 0x9A, 0xCE, 0x1B, 0xB1, 0x64,
+    0x72, 0xA7, 0x0D, 0xD8, 0x8C, 0x59, 0xF3, 0x26,
+    0x5B, 0x8E, 0x24, 0xF1, 0xA5, 0x70, 0xDA, 0x0F,
+    0x20, 0xF5, 0x5F, 0x8A, 0xDE, 0x0B, 0xA1, 0x74,
+    0x09, 0xDC, 0x76, 0xA3, 0xF7, 0x22, 0x88, 0x5D,
+    0xD6, 0x03, 0xA9, 0x7C, 0x28, 0xFD, 0x57, 0x82,
+    0xFF, 0x2A, 0x80, 0x55, 0x01, 0xD4, 0x7E, 0xAB,
+    0x84, 0x51, 0xFB, 0x2E, 0x7A, 0xAF, 0x05, 0xD0,
+    0xAD, 0x78, 0xD2, 0x07, 0x53, 0x86, 0x2C, 0xF9};
+
 // ESP-IDF equivalent of Arduino's millis() function
 static uint32_t millis(void)
 {
@@ -27,26 +61,68 @@ static uint32_t millis(void)
 }
 
 // CRC helper function.
-uint8_t crc8_dvb_s2(uint8_t crc, unsigned char a)
+uint8_t crc8_dvb_s2(uint8_t crc, uint8_t data)
 {
-    static GENERIC_CRC8 crc8_dvb_s2_instance(0xD5);
-    return crc8_dvb_s2_instance.calc(crc ^ a);
+    return crc8_dvb_s2_table[crc ^ data];
 }
 
-MSP::MSP() : m_inputState(MSP_IDLE)
+// mspPacket_t helper functions
+void mspPacket_reset(mspPacket_t *packet)
 {
+    packet->type = MSP_PACKET_UNKNOWN;
+    packet->flags = 0;
+    packet->function = 0;
+    packet->payloadSize = 0;
+    packet->payloadReadIterator = 0;
+    packet->readError = false;
 }
 
-bool MSP::processReceivedByte(uint8_t c)
+void mspPacket_addByte(mspPacket_t *packet, uint8_t b)
 {
-    switch (m_inputState)
+    packet->payload[packet->payloadSize++] = b;
+}
+
+void mspPacket_makeResponse(mspPacket_t *packet)
+{
+    packet->type = MSP_PACKET_RESPONSE;
+}
+
+void mspPacket_makeCommand(mspPacket_t *packet)
+{
+    packet->type = MSP_PACKET_COMMAND;
+}
+
+uint8_t mspPacket_readByte(mspPacket_t *packet)
+{
+    if (packet->payloadReadIterator >= packet->payloadSize)
+    {
+        // We are trying to read beyond the length of the payload
+        packet->readError = true;
+        return 0;
+    }
+
+    return packet->payload[packet->payloadReadIterator++];
+}
+
+// MSP main functions
+void msp_init(msp_t *msp)
+{
+    msp->inputState = MSP_IDLE;
+    msp->offset = 0;
+    msp->crc = 0;
+    mspPacket_reset(&msp->packet);
+}
+
+bool msp_processReceivedByte(msp_t *msp, uint8_t c)
+{
+    switch (msp->inputState)
     {
 
     case MSP_IDLE:
         // Wait for framing char
         if (c == '$')
         {
-            m_inputState = MSP_HEADER_START;
+            msp->inputState = MSP_HEADER_START;
         }
         break;
 
@@ -55,116 +131,115 @@ bool MSP::processReceivedByte(uint8_t c)
         switch (c)
         {
         case 'X':
-            m_inputState = MSP_HEADER_X;
+            msp->inputState = MSP_HEADER_X;
             break;
         default:
-            m_inputState = MSP_IDLE;
+            msp->inputState = MSP_IDLE;
             break;
         }
         break;
 
     case MSP_HEADER_X:
         // Wait for the packet type (cmd or req)
-        m_inputState = MSP_HEADER_V2_NATIVE;
+        msp->inputState = MSP_HEADER_V2_NATIVE;
 
         // Start of a new packet
         // reset the packet, offset iterator, and CRC
-        m_packet.reset();
-        m_offset = 0;
-        m_crc = 0;
+        mspPacket_reset(&msp->packet);
+        msp->offset = 0;
+        msp->crc = 0;
 
         switch (c)
         {
         case '<':
-            m_packet.type = MSP_PACKET_COMMAND;
+            msp->packet.type = MSP_PACKET_COMMAND;
             break;
         case '>':
-            m_packet.type = MSP_PACKET_RESPONSE;
+            msp->packet.type = MSP_PACKET_RESPONSE;
             break;
         default:
-            m_packet.type = MSP_PACKET_UNKNOWN;
-            m_inputState = MSP_IDLE;
+            msp->packet.type = MSP_PACKET_UNKNOWN;
+            msp->inputState = MSP_IDLE;
             break;
         }
         break;
 
     case MSP_HEADER_V2_NATIVE:
         // Read bytes until we have a full header
-        m_inputBuffer[m_offset++] = c;
-        m_crc = crc8_dvb_s2(m_crc, c);
+        msp->inputBuffer[msp->offset++] = c;
+        msp->crc = crc8_dvb_s2(msp->crc, c);
 
         // If we've received the correct amount of bytes for a full header
-        if (m_offset == sizeof(mspHeaderV2_t))
+        if (msp->offset == sizeof(mspHeaderV2_t))
         {
             // Copy header values into packet
-            mspHeaderV2_t *header = (mspHeaderV2_t *)&m_inputBuffer[0];
-            m_packet.payloadSize = header->payloadSize;
-            m_packet.function = header->function;
-            m_packet.flags = header->flags;
+            mspHeaderV2_t *header = (mspHeaderV2_t *)&msp->inputBuffer[0];
+            msp->packet.payloadSize = header->payloadSize;
+            msp->packet.function = header->function;
+            msp->packet.flags = header->flags;
             // reset the offset iterator for re-use in payload below
-            m_offset = 0;
-            if (m_packet.payloadSize == 0)
-                m_inputState = MSP_CHECKSUM_V2_NATIVE;
+            msp->offset = 0;
+            if (msp->packet.payloadSize == 0)
+                msp->inputState = MSP_CHECKSUM_V2_NATIVE;
             else
-                m_inputState = MSP_PAYLOAD_V2_NATIVE;
+                msp->inputState = MSP_PAYLOAD_V2_NATIVE;
         }
         break;
 
     case MSP_PAYLOAD_V2_NATIVE:
         // Read bytes until we reach payloadSize
-        m_packet.payload[m_offset++] = c;
-        m_crc = crc8_dvb_s2(m_crc, c);
+        msp->packet.payload[msp->offset++] = c;
+        msp->crc = crc8_dvb_s2(msp->crc, c);
 
         // If we've received the correct amount of bytes for payload
-        if (m_offset == m_packet.payloadSize)
+        if (msp->offset == msp->packet.payloadSize)
         {
             // Then we're up to the CRC
-            m_inputState = MSP_CHECKSUM_V2_NATIVE;
+            msp->inputState = MSP_CHECKSUM_V2_NATIVE;
         }
         break;
 
     case MSP_CHECKSUM_V2_NATIVE:
         // Assert that the checksums match
-        if (m_crc == c)
+        if (msp->crc == c)
         {
-            m_inputState = MSP_COMMAND_RECEIVED;
+            msp->inputState = MSP_COMMAND_RECEIVED;
         }
         else
         {
-            ESP_LOGI(TAG, "CRC failure on MSP packet - Got %d expected %d", c, m_crc);
-            m_inputState = MSP_IDLE;
+            ESP_LOGI(TAG, "CRC failure on MSP packet - Got %d expected %d", c, msp->crc);
+            msp->inputState = MSP_IDLE;
         }
         break;
 
     default:
-        m_inputState = MSP_IDLE;
+        msp->inputState = MSP_IDLE;
         break;
     }
 
     // If we've successfully parsed a complete packet
     // return true so the calling function knows that
     // a new packet is ready.
-    if (m_inputState == MSP_COMMAND_RECEIVED)
+    if (msp->inputState == MSP_COMMAND_RECEIVED)
     {
         return true;
     }
     return false;
 }
 
-mspPacket_t *
-MSP::getReceivedPacket()
+mspPacket_t *msp_getReceivedPacket(msp_t *msp)
 {
-    return &m_packet;
+    return &msp->packet;
 }
 
-void MSP::markPacketReceived()
+void msp_markPacketReceived(msp_t *msp)
 {
     // Set input state to idle, ready to receive the next packet
     // The current packet data will be discarded internally
-    m_inputState = MSP_IDLE;
+    msp->inputState = MSP_IDLE;
 }
 
-bool MSP::sendPacket(mspPacket_t *packet, msp_port_t *port)
+bool msp_sendPacket(mspPacket_t *packet, msp_port_t *port)
 {
     // Sanity check the packet before sending
     if (packet->type != MSP_PACKET_COMMAND && packet->type != MSP_PACKET_RESPONSE)
@@ -224,8 +299,8 @@ bool MSP::sendPacket(mspPacket_t *packet, msp_port_t *port)
 
     return true;
 }
-uint8_t
-MSP::convertToByteArray(mspPacket_t *packet, uint8_t *byteArray)
+
+uint8_t msp_convertToByteArray(mspPacket_t *packet, uint8_t *byteArray)
 {
     uint8_t bufferPos = 0;
     // Sanity check the packet before converting
@@ -285,8 +360,7 @@ MSP::convertToByteArray(mspPacket_t *packet, uint8_t *byteArray)
     return bufferPos;
 }
 
-uint8_t
-MSP::getTotalPacketSize(mspPacket_t *packet)
+uint8_t msp_getTotalPacketSize(mspPacket_t *packet)
 {
     uint8_t totalSize = 0;
 
@@ -316,11 +390,11 @@ MSP::getTotalPacketSize(mspPacket_t *packet)
     return totalSize;
 }
 
-bool MSP::awaitPacket(mspPacket_t *packet, msp_port_t *port, uint32_t timeoutMillis)
+bool msp_awaitPacket(msp_t *msp, mspPacket_t *packet, msp_port_t *port, uint32_t timeoutMillis)
 {
     uint32_t requestTime = millis();
 
-    sendPacket(packet, port);
+    msp_sendPacket(packet, port);
 
     // wait up to <timeoutMillis> milliseconds for a response, then bail out
     while (millis() - requestTime < timeoutMillis)
@@ -330,7 +404,7 @@ bool MSP::awaitPacket(mspPacket_t *packet, msp_port_t *port, uint32_t timeoutMil
             uint8_t data;
             if (port->read(&data, 1) > 0)
             {
-                if (processReceivedByte(data))
+                if (msp_processReceivedByte(msp, data))
                 {
                     return true;
                 }
@@ -339,6 +413,6 @@ bool MSP::awaitPacket(mspPacket_t *packet, msp_port_t *port, uint32_t timeoutMil
         // Small delay to prevent busy waiting
         vTaskDelay(pdMS_TO_TICKS(1));
     }
-    ESP_LOGI(TAG, "MSP::awaitPacket Exceeded timeout while waiting for packet");
+    ESP_LOGI(TAG, "msp_awaitPacket Exceeded timeout while waiting for packet");
     return false;
 }

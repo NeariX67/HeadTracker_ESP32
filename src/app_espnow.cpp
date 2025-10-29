@@ -1,4 +1,4 @@
-#ifdef FRAMEWORK_ARDUINO
+#if defined(FRAMEWORK_ARDUINO) && !defined(USE_ELRS)
 #include <ESP8266WiFi.h>
 #include "app_espnow.h"
 #include <espnow.h>

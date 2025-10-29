@@ -90,13 +90,12 @@ void mode_Thread(void *pvParameters)
         ESP_LOGI(TAG, "Enter binding mode");
         led_set_status(binding);
         set_binding_flag(true); // set binding mode
-        vTaskDelete(NULL); // delete this task
+        vTaskDelete(NULL);      // delete this task
     }
     ESP_LOGI(TAG, "Power cycle count: %d", power_cycle_cnt);
 
     for (;;)
     {
-        ESP_LOGI(TAG, "Mode thread running");
         if (esp_timer_get_time() > POWER_CYCLE_WINDOW_US && power_cycle_cnt != 0)
         {
             power_cycle_cnt = 0; // reset the count
@@ -107,18 +106,18 @@ void mode_Thread(void *pvParameters)
         if (!isconnected() && !isBinding() && !get_OTA_Mode() && esp_timer_get_time() >= OTA_WAIT_US)
         {
             ESP_LOGI(TAG, "Enter OTA mode");
-            #ifdef HEADTRACKER
+#ifdef HEADTRACKER
             imu_Deinit(); // Delet IMU task and calculation task
             ht_espnow_deinit();
             buzzer_play_tone_sequence(doremi, 8); // play a tone sequence
-            #elif defined RX_SE
+#elif defined RX_SE
             rx_espnow_deinit();
-            #endif
-            HttpOTA_server_init();                // OTA server init
+#endif
+            HttpOTA_server_init(); // OTA server init
             set_OTA_Mode(true);
             led_set_status(ota);
         }
-        else if (isconnected() || get_OTA_Mode() || isBinding())   // exit if espnow connected
+        else if (isconnected() || get_OTA_Mode() || isBinding()) // exit if espnow connected
         {
             ESP_LOGD(TAG, "Task exit");
             vTaskDelete(NULL);
