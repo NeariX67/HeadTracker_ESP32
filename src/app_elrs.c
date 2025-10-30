@@ -39,6 +39,7 @@ static bool binding_flag = false;
 static bool is_send_failed = false;
 static bool is_espnow_connected = false;
 static uint16_t chanl_data[6];
+esp_now_peer_info_t peerInfo;
 
 static uint8_t bind_phrase[] = {0xB4, 0xDE, 0x4E, 0x14, 0x8B, 0x6F};
 
@@ -69,20 +70,20 @@ static void wifi_init(void)
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    ESP_ERROR_CHECK(esp_wifi_set_mac(WIFI_IF_STA, bind_phrase));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_FLASH));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
     ESP_ERROR_CHECK(esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE));
     ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(80)); // 20dbm
+                                                    // esp_wifi_disconnect();
 
-#if ESPNOW_ENABLE_LONG_RANGE
-    ESP_ERROR_CHECK(esp_wifi_set_protocol(ESPNOW_WIFI_IF, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR));
-#endif
+    esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
 }
 
 static void espnow_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status)
 {
-    ESP_LOGI(TAG, "espnow_send_cb");
+    ESP_LOGI(TAG, "espnow_send_cb: %d", status);
     if (status)
     {
         is_send_failed = true;
@@ -242,8 +243,6 @@ static void espnow_send_task()
         mspPacket_addByte(&frame, chanl_data[1] & 0xFF);
         mspPacket_addByte(&frame, (chanl_data[1] >> 8) & 0xFF);
 
-        ESP_LOGI(TAG, "Payload size: %d", frame.payloadSize);
-
         uint8_t packetSize = msp_getTotalPacketSize(&frame);
         uint8_t data[packetSize];
         uint8_t result = msp_convertToByteArray(&frame, data);
@@ -310,6 +309,12 @@ esp_err_t espnow_init(void)
     ESP_ERROR_CHECK(esp_now_register_send_cb(espnow_send_cb));
     ESP_ERROR_CHECK(esp_now_register_recv_cb(espnow_recv_cb));
 
+    memcpy(peerInfo.peer_addr, bind_phrase, 6);
+    peerInfo.channel = 0;
+    peerInfo.encrypt = false;
+    ESP_ERROR_CHECK(esp_now_add_peer(&peerInfo));
+    // esp_now_del_peer(bind_phrase);
+
 #if defined HEADTRACKER
     xTaskCreate(espnow_send_task, "espnow_send_task", ESPNOW_THREAD_STACK_SIZE_SET, NULL, ESPNOW_THREAD_PRIORITY_SET, &Handle_elrs_task);
 #elif defined RX_SE
@@ -331,6 +336,9 @@ void ht_espnow_init(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+
+    // MAC address can only be set with unicast, so first byte must be even, not odd
+    bind_phrase[0] = bind_phrase[0] & ~0x01;
 
     esp_read_mac(local_mac, ESP_MAC_WIFI_STA);
     ESP_LOGI(TAG, "Local Mac: " MACSTR "", MAC2STR(local_mac));

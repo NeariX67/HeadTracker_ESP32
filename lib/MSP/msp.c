@@ -320,8 +320,6 @@ uint8_t msp_convertToByteArray(mspPacket_t *packet, uint8_t *byteArray)
     byteArray[bufferPos++] = '$';
     byteArray[bufferPos++] = 'X';
 
-    ESP_LOGI(TAG, "bufferPos 1: %d", bufferPos);
-
     // Write out the packet type
     if (packet->type == MSP_PACKET_COMMAND)
     {
@@ -332,7 +330,6 @@ uint8_t msp_convertToByteArray(mspPacket_t *packet, uint8_t *byteArray)
         byteArray[bufferPos++] = '>';
     }
 
-    ESP_LOGI(TAG, "bufferPos 2: %d", bufferPos);
     // Subsequent bytes are contained in the crc
     uint8_t crc = 0;
 
@@ -349,7 +346,6 @@ uint8_t msp_convertToByteArray(mspPacket_t *packet, uint8_t *byteArray)
         byteArray[bufferPos++] = headerBuffer[i];
         crc = crc8_dvb_s2(crc, headerBuffer[i]);
     }
-    ESP_LOGI(TAG, "bufferPos 3: %d", bufferPos);
 
     // Write out the payload, adding each byte to the crc
     for (uint16_t i = 0; i < packet->payloadSize; ++i)
@@ -357,32 +353,16 @@ uint8_t msp_convertToByteArray(mspPacket_t *packet, uint8_t *byteArray)
         byteArray[bufferPos++] = packet->payload[i];
         crc = crc8_dvb_s2(crc, packet->payload[i]);
     }
-    ESP_LOGI(TAG, "bufferPos 4: %d", bufferPos);
 
     // Write out the crc
     byteArray[bufferPos++] = crc;
-    ESP_LOGI(TAG, "bufferPos 5: %d", bufferPos);
 
     return bufferPos;
 }
 
 uint8_t msp_getTotalPacketSize(mspPacket_t *packet)
 {
-    uint8_t totalSize = 0;
-
-    // framing chars
-    totalSize += sizeof('$');
-    totalSize += sizeof('X');
-
-    // packet type
-    if (packet->type == MSP_PACKET_COMMAND)
-    {
-        totalSize += sizeof('<');
-    }
-    else if (packet->type == MSP_PACKET_RESPONSE)
-    {
-        totalSize += sizeof('>');
-    }
+    uint8_t totalSize = 3;
 
     // header
     totalSize += sizeof(mspHeaderV2_t);
