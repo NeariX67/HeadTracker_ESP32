@@ -249,8 +249,8 @@ static void espnow_bind_task()
         // Do not bind again after success.
         if (is_recv_cb_data && !success_flag)
         {
-            bool is_legacy_bind = false;
-            bool is_msp_bind = false;
+            bool legacy_bind_detected = false;
+            bool msp_bind_detected = false;
             msp_packet_t msp_pkt;
             
             // Try to parse as MSP packet (ELRS Backpack)
@@ -259,12 +259,12 @@ static void espnow_bind_task()
                 if (msp_pkt.function == MSP_ELRS_BIND && msp_pkt.payloadSize == 6)
                 {
                     Serial.println("Received MSP_ELRS_BIND packet");
-                    is_msp_bind = true;
+                    msp_bind_detected = true;
                 }
             }
             
             // Try legacy binding protocol
-            if (!is_msp_bind && recv_raw_len == sizeof(espnow_frame_t))
+            if (!msp_bind_detected && recv_raw_len == sizeof(espnow_frame_t))
             {
                 // Check crc for legacy protocol
                 if (espnow_crc(&recv_cb_data) == recv_cb_data.crc_8)
@@ -272,13 +272,13 @@ static void espnow_bind_task()
                     // if the binding message matches, it's legacy bind
                     if (!memcmp(&recv_cb_data, &frame, sizeof(espnow_frame_t)))
                     {
-                        is_legacy_bind = true;
+                        legacy_bind_detected = true;
                         Serial.println("Received legacy binding packet");
                     }
                 }
             }
             
-            if (is_msp_bind || is_legacy_bind)
+            if (msp_bind_detected || legacy_bind_detected)
             {
                 // Unpair all unicast peers first, make sure only one unicast exist at the same time.
                 espnow_unpairAll();
@@ -286,7 +286,7 @@ static void espnow_bind_task()
                 // Add peer to the list.
                 uint8_t peer_addr[ESP_NOW_ETH_ALEN];
                 
-                if (is_msp_bind)
+                if (msp_bind_detected)
                 {
                     // For ELRS Backpack, the MAC address comes from the MSP payload
                     memcpy(peer_addr, msp_pkt.payload, ESP_NOW_ETH_ALEN);
@@ -308,7 +308,12 @@ static void espnow_bind_task()
                 Serial.println("Bind success.");
                 // save peer info into nvs.
             }
+            else
+            {
+                Serial.println("Binding message validation failed.");
+            }
             
+            // Always reset flag to allow processing next packet
             is_recv_cb_data = false;
         }
         if (success_flag)

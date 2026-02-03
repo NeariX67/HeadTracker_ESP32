@@ -555,8 +555,8 @@ static void espnow_bind_task()
         // Do not bind again after success.
         if (xQueueReceive(espnow_re_queue, &recv_cb, 0) == pdTRUE && !success_flag)
         {
-            bool is_legacy_bind = false;
-            bool is_msp_bind = false;
+            bool legacy_bind_detected = false;
+            bool msp_bind_detected = false;
             msp_packet_t msp_pkt;
             
             // Try to parse as MSP packet (ELRS Backpack)
@@ -565,12 +565,12 @@ static void espnow_bind_task()
                 if (msp_pkt.function == MSP_ELRS_BIND && msp_pkt.payloadSize == 6)
                 {
                     ESP_LOGI(TAG, "Received MSP_ELRS_BIND packet");
-                    is_msp_bind = true;
+                    msp_bind_detected = true;
                 }
             }
             
             // Try legacy binding protocol
-            if (!is_msp_bind && recv_cb.data_len == sizeof(espnow_frame_t))
+            if (!msp_bind_detected && recv_cb.data_len == sizeof(espnow_frame_t))
             {
                 // Check crc for legacy protocol
                 if (espnow_crc((espnow_frame_t *)recv_cb.data) == recv_cb.data[sizeof(espnow_frame_t) - 1])
@@ -578,13 +578,13 @@ static void espnow_bind_task()
                     // if the binding message matches, it's legacy bind
                     if (!memcmp(recv_cb.data, &frame, sizeof(espnow_frame_t)))
                     {
-                        is_legacy_bind = true;
+                        legacy_bind_detected = true;
                         ESP_LOGI(TAG, "Received legacy binding packet");
                     }
                 }
             }
             
-            if (is_msp_bind || is_legacy_bind)
+            if (msp_bind_detected || legacy_bind_detected)
             {
                 // Unpair all unicast peers first, make sure only one unicast exist at the same time.
                 espnow_unpairAll();
@@ -592,7 +592,7 @@ static void espnow_bind_task()
                 esp_now_peer_info_t peer;
                 memset(&peer, 0, sizeof(esp_now_peer_info_t));
                 
-                if (is_msp_bind)
+                if (msp_bind_detected)
                 {
                     // For ELRS Backpack, the MAC address comes from the MSP payload
                     memcpy(peer.peer_addr, msp_pkt.payload, ESP_NOW_ETH_ALEN);
@@ -616,10 +616,6 @@ static void espnow_bind_task()
 #if defined(HEADTRACKER)
                 buzzer_set_state(BUZZER_SINGLE, 1000, 0);
 #endif
-            }
-            else if (recv_cb.data_len != sizeof(espnow_frame_t))
-            {
-                ESP_LOGI(TAG, "Binding message length incorrect.");
             }
             else
             {
