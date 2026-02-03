@@ -125,6 +125,11 @@ static bool msp_process_byte(uint8_t c)
             if (msp_offset < MSP_PORT_INBUF_SIZE) {
                 msp_packet.payload[msp_offset++] = c;
                 msp_crc = crc8_dvb_s2_byte(msp_crc, c);
+            } else {
+                // Payload overflow - abort parsing
+                ESP_LOGE(TAG, "MSP payload overflow, resetting parser");
+                msp_state = MSP_IDLE;
+                break;
             }
 
             if (msp_offset == msp_packet.payloadSize) {
@@ -136,7 +141,7 @@ static bool msp_process_byte(uint8_t c)
             if (msp_crc == c) {
                 msp_state = MSP_COMMAND_RECEIVED;
             } else {
-                ESP_LOGE(TAG, "MSP CRC failure - Got %d expected %d", c, msp_crc);
+                ESP_LOGE(TAG, "MSP CRC failure - Got 0x%02X expected 0x%02X", c, msp_crc);
                 msp_state = MSP_IDLE;
             }
             break;

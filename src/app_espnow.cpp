@@ -27,7 +27,9 @@ static uint8_t source_mac[ESP_NOW_ETH_ALEN] = {};
 
 static espnow_frame_t recv_cb_data;  // Received data from espnow.
 static bool is_recv_cb_data = false; // Flag to indicate if received data is the latest.
-static uint8_t recv_raw_data[256];  // Raw received data for MSP parsing
+
+#define MSP_RECV_BUFFER_SIZE 256
+static uint8_t msp_recv_buffer[MSP_RECV_BUFFER_SIZE];  // Raw received data for MSP parsing
 static int recv_raw_len = 0;
 
 static Ticker LED_blink_timer;
@@ -110,6 +112,11 @@ static bool msp_process_byte(uint8_t c)
             if (msp_offset < MSP_PORT_INBUF_SIZE) {
                 msp_packet.payload[msp_offset++] = c;
                 msp_crc = crc8_dvb_s2_byte(msp_crc, c);
+            } else {
+                // Payload overflow - abort parsing
+                Serial.println("MSP payload overflow, resetting parser");
+                msp_state = MSP_IDLE;
+                break;
             }
 
             if (msp_offset == msp_packet.payloadSize) {
@@ -121,7 +128,10 @@ static bool msp_process_byte(uint8_t c)
             if (msp_crc == c) {
                 msp_state = MSP_COMMAND_RECEIVED;
             } else {
-                Serial.println("MSP CRC failure");
+                Serial.print("MSP CRC failure - Got 0x");
+                Serial.print(c, HEX);
+                Serial.print(" expected 0x");
+                Serial.println(msp_crc, HEX);
                 msp_state = MSP_IDLE;
             }
             break;
@@ -173,8 +183,8 @@ static void espnow_recv_cb(u8 *mac_addr, u8 *data, u8 len)
     }
 
     // Store raw data for both legacy and MSP parsing
-    if (len <= sizeof(recv_raw_data)) {
-        memcpy(recv_raw_data, data, len);
+    if (len <= MSP_RECV_BUFFER_SIZE) {
+        memcpy(msp_recv_buffer, data, len);
         recv_raw_len = len;
         
         // Also try to copy to legacy format if it matches
@@ -244,7 +254,7 @@ static void espnow_bind_task()
             msp_packet_t msp_pkt;
             
             // Try to parse as MSP packet (ELRS Backpack)
-            if (msp_parse_buffer(recv_raw_data, recv_raw_len, &msp_pkt))
+            if (msp_parse_buffer(msp_recv_buffer, recv_raw_len, &msp_pkt))
             {
                 if (msp_pkt.function == MSP_ELRS_BIND && msp_pkt.payloadSize == 6)
                 {
