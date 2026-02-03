@@ -52,6 +52,7 @@ typedef struct __attribute__((packed)) {
 } msp_header_v2_t;
 
 #define MSP_PORT_INBUF_SIZE 64
+#define MSP_RECV_BUFFER_SIZE 256
 
 typedef struct {
     msp_packet_type_e type;

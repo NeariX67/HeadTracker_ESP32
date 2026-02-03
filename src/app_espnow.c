@@ -158,8 +158,8 @@ static bool msp_process_byte(uint8_t c)
 static bool msp_parse_buffer(const uint8_t *data, int len, msp_packet_t *packet)
 {
     msp_state = MSP_IDLE;
-    for (int i = 0; i < len; i++) {
-        if (msp_process_byte(data[i])) {
+    for (int byte_index = 0; byte_index < len; byte_index++) {
+        if (msp_process_byte(data[byte_index])) {
             // Copy the parsed packet
             memcpy(packet, &msp_packet, sizeof(msp_packet_t));
             msp_state = MSP_IDLE; // Reset for next packet
