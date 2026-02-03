@@ -47,6 +47,123 @@ static uint16_t chanl_data[6];
 static const uint8_t broadcast_mac[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 static uint8_t local_mac[ESP_NOW_ETH_ALEN] = {};
 
+// MSP parsing state
+static msp_state_e msp_state = MSP_IDLE;
+static msp_packet_t msp_packet;
+static uint8_t msp_input_buffer[sizeof(msp_header_v2_t)];
+static uint8_t msp_offset = 0;
+static uint8_t msp_crc = 0;
+
+// CRC8 DVB-S2 calculation for MSP
+static uint8_t crc8_dvb_s2_byte(uint8_t crc, uint8_t a)
+{
+    crc ^= a;
+    for (int i = 0; i < 8; ++i) {
+        if (crc & 0x80) {
+            crc = (crc << 1) ^ 0xD5;
+        } else {
+            crc = crc << 1;
+        }
+    }
+    return crc;
+}
+
+// Process a single byte for MSP parsing
+static bool msp_process_byte(uint8_t c)
+{
+    switch (msp_state) {
+        case MSP_IDLE:
+            if (c == '$') {
+                msp_state = MSP_HEADER_START;
+            }
+            break;
+
+        case MSP_HEADER_START:
+            if (c == 'X') {
+                msp_state = MSP_HEADER_X;
+            } else {
+                msp_state = MSP_IDLE;
+            }
+            break;
+
+        case MSP_HEADER_X:
+            msp_state = MSP_HEADER_V2_NATIVE;
+            memset(&msp_packet, 0, sizeof(msp_packet_t));
+            msp_offset = 0;
+            msp_crc = 0;
+
+            if (c == '<') {
+                msp_packet.type = MSP_PACKET_COMMAND;
+            } else if (c == '>') {
+                msp_packet.type = MSP_PACKET_RESPONSE;
+            } else {
+                msp_packet.type = MSP_PACKET_UNKNOWN;
+                msp_state = MSP_IDLE;
+            }
+            break;
+
+        case MSP_HEADER_V2_NATIVE:
+            msp_input_buffer[msp_offset++] = c;
+            msp_crc = crc8_dvb_s2_byte(msp_crc, c);
+
+            if (msp_offset == sizeof(msp_header_v2_t)) {
+                msp_header_v2_t* header = (msp_header_v2_t*)&msp_input_buffer[0];
+                msp_packet.payloadSize = header->payloadSize;
+                msp_packet.function = header->function;
+                msp_packet.flags = header->flags;
+                msp_offset = 0;
+                
+                if (msp_packet.payloadSize == 0) {
+                    msp_state = MSP_CHECKSUM_V2_NATIVE;
+                } else {
+                    msp_state = MSP_PAYLOAD_V2_NATIVE;
+                }
+            }
+            break;
+
+        case MSP_PAYLOAD_V2_NATIVE:
+            if (msp_offset < MSP_PORT_INBUF_SIZE) {
+                msp_packet.payload[msp_offset++] = c;
+                msp_crc = crc8_dvb_s2_byte(msp_crc, c);
+            }
+
+            if (msp_offset == msp_packet.payloadSize) {
+                msp_state = MSP_CHECKSUM_V2_NATIVE;
+            }
+            break;
+
+        case MSP_CHECKSUM_V2_NATIVE:
+            if (msp_crc == c) {
+                msp_state = MSP_COMMAND_RECEIVED;
+            } else {
+                ESP_LOGE(TAG, "MSP CRC failure - Got %d expected %d", c, msp_crc);
+                msp_state = MSP_IDLE;
+            }
+            break;
+        
+        default:
+            msp_state = MSP_IDLE;
+            break;
+    }
+
+    return (msp_state == MSP_COMMAND_RECEIVED);
+}
+
+// Parse MSP data from buffer
+static bool msp_parse_buffer(const uint8_t *data, int len, msp_packet_t *packet)
+{
+    msp_state = MSP_IDLE;
+    for (int i = 0; i < len; i++) {
+        if (msp_process_byte(data[i])) {
+            // Copy the parsed packet
+            memcpy(packet, &msp_packet, sizeof(msp_packet_t));
+            msp_state = MSP_IDLE; // Reset for next packet
+            return true;
+        }
+    }
+    return false;
+}
+
 void set_binding_flag(bool true_or_false)
 {
     binding_flag = true_or_false;
@@ -433,40 +550,75 @@ static void espnow_bind_task()
         // Do not bind again after success.
         if (xQueueReceive(espnow_re_queue, &recv_cb, 0) == pdTRUE && !success_flag)
         {
-            // Check length.
-            if (recv_cb.data_len != sizeof(espnow_frame_t))
+            bool is_legacy_bind = false;
+            bool is_msp_bind = false;
+            msp_packet_t msp_pkt;
+            
+            // Try to parse as MSP packet (ELRS Backpack)
+            if (msp_parse_buffer(recv_cb.data, recv_cb.data_len, &msp_pkt))
+            {
+                if (msp_pkt.function == MSP_ELRS_BIND && msp_pkt.payloadSize == 6)
+                {
+                    ESP_LOGI(TAG, "Received MSP_ELRS_BIND packet");
+                    is_msp_bind = true;
+                }
+            }
+            
+            // Try legacy binding protocol
+            if (!is_msp_bind && recv_cb.data_len == sizeof(espnow_frame_t))
+            {
+                // Check crc for legacy protocol
+                if (espnow_crc((espnow_frame_t *)recv_cb.data) == recv_cb.data[sizeof(espnow_frame_t) - 1])
+                {
+                    // if the binding message matches, it's legacy bind
+                    if (!memcmp(recv_cb.data, &frame, sizeof(espnow_frame_t)))
+                    {
+                        is_legacy_bind = true;
+                        ESP_LOGI(TAG, "Received legacy binding packet");
+                    }
+                }
+            }
+            
+            if (is_msp_bind || is_legacy_bind)
+            {
+                // Unpair all unicast peers first, make sure only one unicast exist at the same time.
+                espnow_unpairAll();
+                // Add peer to the list.
+                esp_now_peer_info_t peer;
+                memset(&peer, 0, sizeof(esp_now_peer_info_t));
+                
+                if (is_msp_bind)
+                {
+                    // For ELRS Backpack, the MAC address comes from the MSP payload
+                    memcpy(peer.peer_addr, msp_pkt.payload, ESP_NOW_ETH_ALEN);
+                    ESP_LOGI(TAG, "ELRS Bind MAC from payload: " MACSTR "", MAC2STR(peer.peer_addr));
+                }
+                else
+                {
+                    // For legacy binding, MAC address comes from the sender
+                    memcpy(peer.peer_addr, recv_cb.src_addr, ESP_NOW_ETH_ALEN);
+                }
+                
+                peer.channel = ESPNOW_CHANNEL;
+                peer.ifidx = WIFI_IF_STA;
+                peer.encrypt = false;
+                ESP_ERROR_CHECK(esp_now_add_peer(&peer));
+                success_flag = true;
+                ESP_LOGI(TAG, "Pair " MACSTR " success.", MAC2STR(peer.peer_addr));
+                // save peer info into nvs.
+                esp_now_save_peer(&peer);
+                set_binding_flag(false); // must clear flag, so it will not enter binding mode again.
+#if defined(HEADTRACKER)
+                buzzer_set_state(BUZZER_SINGLE, 1000, 0);
+#endif
+            }
+            else if (recv_cb.data_len != sizeof(espnow_frame_t))
             {
                 ESP_LOGI(TAG, "Binding message length incorrect.");
             }
-            // Check crc.
-            else if (espnow_crc((espnow_frame_t *)recv_cb.data) != recv_cb.data[sizeof(espnow_frame_t) - 1])
-            {
-                ESP_LOGI(TAG, "Binding message crc incorrect.");
-            }
             else
             {
-                // if the binding message matches, add to peer list.
-                if (!memcmp(recv_cb.data, &frame, sizeof(espnow_frame_t)))
-                {
-                    // Unpair all unicast peers first, make sure only one unicast exist at the same time.
-                    espnow_unpairAll();
-                    // Add peer to the list.
-                    esp_now_peer_info_t peer;
-                    memset(&peer, 0, sizeof(esp_now_peer_info_t));
-                    memcpy(peer.peer_addr, recv_cb.src_addr, ESP_NOW_ETH_ALEN);
-                    peer.channel = ESPNOW_CHANNEL;
-                    peer.ifidx = WIFI_IF_STA;
-                    peer.encrypt = false;
-                    ESP_ERROR_CHECK(esp_now_add_peer(&peer));
-                    success_flag = true;
-                    ESP_LOGI(TAG, "Pair " MACSTR " success.", MAC2STR(peer.peer_addr));
-                    // save peer info into nvs.
-                    esp_now_save_peer(&peer);
-                    set_binding_flag(false); // must clear flag, so it will not enter binding mode again.
-#if defined(HEADTRACKER)
-                    buzzer_set_state(BUZZER_SINGLE, 1000, 0);
-#endif
-                }
+                ESP_LOGI(TAG, "Binding message validation failed.");
             }
             free(recv_cb.data);
         }
