@@ -128,10 +128,9 @@ static bool msp_process_byte(uint8_t c)
             if (msp_crc == c) {
                 msp_state = MSP_COMMAND_RECEIVED;
             } else {
-                Serial.print("MSP CRC failure - Got 0x");
-                Serial.print(c, HEX);
-                Serial.print(" expected 0x");
-                Serial.println(msp_crc, HEX);
+                char msg[64];
+                sprintf(msg, "MSP CRC failure - Got 0x%02X expected 0x%02X", c, msp_crc);
+                Serial.println(msg);
                 msp_state = MSP_IDLE;
             }
             break;
@@ -290,12 +289,11 @@ static void espnow_bind_task()
                 {
                     // For ELRS Backpack, the MAC address comes from the MSP payload
                     memcpy(peer_addr, msp_pkt.payload, ESP_NOW_ETH_ALEN);
-                    Serial.print("ELRS Bind MAC from payload: ");
-                    for (int i = 0; i < ESP_NOW_ETH_ALEN; i++) {
-                        Serial.printf("%02X", peer_addr[i]);
-                        if (i < ESP_NOW_ETH_ALEN - 1) Serial.print(":");
-                    }
-                    Serial.println();
+                    char mac_str[24];
+                    sprintf(mac_str, "ELRS Bind MAC from payload: %02X:%02X:%02X:%02X:%02X:%02X",
+                            peer_addr[0], peer_addr[1], peer_addr[2], 
+                            peer_addr[3], peer_addr[4], peer_addr[5]);
+                    Serial.println(mac_str);
                 }
                 else
                 {
