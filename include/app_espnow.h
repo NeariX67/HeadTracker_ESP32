@@ -45,10 +45,13 @@ typedef enum {
     MSP_PACKET_RESPONSE
 } msp_packet_type_e;
 
+// MSP V2 header structure
+// Must be packed to match ELRS wire protocol specification
+// Ensures no padding between fields for correct parsing
 typedef struct __attribute__((packed)) {
-    uint8_t  flags;
-    uint16_t function;
-    uint16_t payloadSize;
+    uint8_t  flags;        // Protocol flags (typically 0)
+    uint16_t function;     // MSP function code (e.g., MSP_ELRS_BIND = 0x09)
+    uint16_t payloadSize;  // Number of payload bytes following this header
 } msp_header_v2_t;
 
 #define MSP_PORT_INBUF_SIZE 64
