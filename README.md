@@ -27,9 +27,9 @@ You can DIY the hardware by yourself.
 5. **OTA** support.
 6. **Buzzer** support.
 7. **Touch key** support.
+8. **ELRS Backpack binding** support - Compatible with ExpressLRS Backpack devices using MSP protocol over ESP-NOW.
 
 
 # Future Functions
 1. GUI configurator support.
-2. ELRS wireless headtracking connection support.
-3. Radio transmitter bluetooth connection support.
+2. Radio transmitter bluetooth connection support.
