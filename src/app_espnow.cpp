@@ -111,15 +111,14 @@ static bool msp_process_byte(uint8_t c)
             if (msp_offset < MSP_PORT_INBUF_SIZE) {
                 msp_packet.payload[msp_offset++] = c;
                 msp_crc = crc8_dvb_s2_byte(msp_crc, c);
+                
+                if (msp_offset == msp_packet.payloadSize) {
+                    msp_state = MSP_CHECKSUM_V2_NATIVE;
+                }
             } else {
                 // Payload overflow - abort parsing
                 Serial.println("MSP payload overflow, resetting parser");
                 msp_state = MSP_IDLE;
-                break;
-            }
-
-            if (msp_offset == msp_packet.payloadSize) {
-                msp_state = MSP_CHECKSUM_V2_NATIVE;
             }
             break;
 
@@ -146,7 +145,7 @@ static bool msp_process_byte(uint8_t c)
 static bool msp_parse_buffer(const uint8_t *data, int len, msp_packet_t *packet)
 {
     msp_state = MSP_IDLE;
-    for (int byte_index = 0; byte_index < len; byte_index++) {
+    for (size_t byte_index = 0; byte_index < (size_t)len; byte_index++) {
         if (msp_process_byte(data[byte_index])) {
             // Copy the parsed packet
             memcpy(packet, &msp_packet, sizeof(msp_packet_t));
