@@ -156,6 +156,10 @@ static bool msp_process_byte(uint8_t c)
 // Parse MSP data from buffer
 static bool msp_parse_buffer(const uint8_t *data, int len, msp_packet_t *packet)
 {
+    if (len < 0) {
+        return false;  // Invalid length
+    }
+    
     msp_state = MSP_IDLE;
     for (size_t byte_index = 0; byte_index < (size_t)len; byte_index++) {
         if (msp_process_byte(data[byte_index])) {
