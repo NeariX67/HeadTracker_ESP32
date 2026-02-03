@@ -160,8 +160,9 @@ static bool msp_parse_buffer(const uint8_t *data, int len, msp_packet_t *packet)
         return false;  // Invalid length
     }
     
+    size_t len_size = (size_t)len;
     msp_state = MSP_IDLE;
-    for (size_t byte_index = 0; byte_index < (size_t)len; byte_index++) {
+    for (size_t byte_index = 0; byte_index < len_size; byte_index++) {
         if (msp_process_byte(data[byte_index])) {
             // Copy the parsed packet
             memcpy(packet, &msp_packet, sizeof(msp_packet_t));

@@ -29,7 +29,7 @@ static espnow_frame_t recv_cb_data;  // Received data from espnow.
 static bool is_recv_cb_data = false; // Flag to indicate if received data is the latest.
 
 static uint8_t msp_recv_buffer[MSP_RECV_BUFFER_SIZE];  // Raw received data for MSP parsing
-static int recv_raw_len = 0;
+static size_t msp_recv_buffer_len = 0;
 
 static Ticker LED_blink_timer;
 
@@ -148,8 +148,9 @@ static bool msp_parse_buffer(const uint8_t *data, int len, msp_packet_t *packet)
         return false;  // Invalid length
     }
     
+    size_t len_size = (size_t)len;
     msp_state = MSP_IDLE;
-    for (size_t byte_index = 0; byte_index < (size_t)len; byte_index++) {
+    for (size_t byte_index = 0; byte_index < len_size; byte_index++) {
         if (msp_process_byte(data[byte_index])) {
             // Copy the parsed packet
             memcpy(packet, &msp_packet, sizeof(msp_packet_t));
@@ -184,9 +185,9 @@ static void espnow_recv_cb(u8 *mac_addr, u8 *data, u8 len)
     }
 
     // Store raw data for both legacy and MSP parsing
-    if (len <= MSP_RECV_BUFFER_SIZE) {
+    if (len < MSP_RECV_BUFFER_SIZE) {
         memcpy(msp_recv_buffer, data, len);
-        recv_raw_len = len;
+        msp_recv_buffer_len = len;
         
         // Also try to copy to legacy format if it matches
         if (len == sizeof(espnow_frame_t)) {
@@ -255,7 +256,7 @@ static void espnow_bind_task()
             msp_packet_t msp_pkt;
             
             // Try to parse as MSP packet (ELRS Backpack)
-            if (msp_parse_buffer(msp_recv_buffer, recv_raw_len, &msp_pkt))
+            if (msp_parse_buffer(msp_recv_buffer, (int)msp_recv_buffer_len, &msp_pkt))
             {
                 if (msp_pkt.function == MSP_ELRS_BIND && msp_pkt.payloadSize == 6)
                 {
@@ -265,7 +266,7 @@ static void espnow_bind_task()
             }
             
             // Try legacy binding protocol
-            if (!msp_bind_detected && recv_raw_len == sizeof(espnow_frame_t))
+            if (!msp_bind_detected && msp_recv_buffer_len == sizeof(espnow_frame_t))
             {
                 // Check crc for legacy protocol
                 if (espnow_crc(&recv_cb_data) == recv_cb_data.crc_8)
