@@ -41,7 +41,7 @@ static const char *TAG = "elrs";
 static TaskHandle_t Handle_elrs_task;
 static QueueHandle_t espnow_re_queue;
 static bool is_binding_mode = false;
-static bool is_headtracking_enabled = false;
+static bool is_headtracking_enabled = true;
 static bool binding_flag = false;
 static bool is_send_failed = false;
 static bool is_espnow_connected = false;
@@ -102,7 +102,9 @@ static void espnow_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *
 {
     // ESP_LOGI(TAG, "espnow_recv_cb");
 
-    ESP_LOGI(TAG, "<<< %s", bytes_to_hex(data, len));
+    char *data_hex = bytes_to_hex(data, len);
+    ESP_LOGI(TAG, "<<< %s", data_hex);
+    free(data_hex);
 
     msp_t msp;
     msp_init(&msp);
@@ -113,10 +115,9 @@ static void espnow_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *
             mspPacket_t *packet = msp_getReceivedPacket(&msp);
             processMspPacket(packet);
             msp_markPacketReceived(&msp);
+            mspPacket_reset(packet);
         }
     }
-
-    // TODO
 }
 
 void espnow_data_prepare(uint16_t chanl_roll, uint16_t chanl_till, uint16_t chanl_pan)
@@ -145,6 +146,7 @@ esp_err_t esp_now_save_peer(esp_now_peer_info_t *peer)
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "Failed to write peer info into NVS");
+        nvs_close(nvs_handle);
         return err;
     }
 
@@ -152,7 +154,8 @@ esp_err_t esp_now_save_peer(esp_now_peer_info_t *peer)
     err = nvs_commit(nvs_handle);
     if (err != ESP_OK)
     {
-        ESP_LOGI(TAG, "Successfully write peer info into NVS");
+        ESP_LOGE(TAG, "Failed to commit peer info into NVS");
+        nvs_close(nvs_handle);
         return err;
     }
 
@@ -221,7 +224,6 @@ static void espnow_send_task()
 
     uint8_t *peer_addr;
     mspPacket_t frame;
-    size_t data_len;
     TickType_t xLastWakeTime;
 
     uint8_t packetSize = 15;
