@@ -120,11 +120,11 @@ static void espnow_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *
     }
 }
 
-void espnow_data_prepare(uint16_t chanl_roll, uint16_t chanl_till, uint16_t chanl_pan)
+void espnow_data_prepare(uint16_t chanl_roll, uint16_t chanl_tilt, uint16_t chanl_pan)
 {
     // ESP_LOGI(TAG, "espnow_data_prepare");
     chanl_data[0] = map(chanl_roll, DEF_MIN_PWM, DEF_MAX_PWM, 192, 1792);
-    chanl_data[1] = map(chanl_till, DEF_MIN_PWM, DEF_MAX_PWM, 192, 1792);
+    chanl_data[1] = map(chanl_tilt, DEF_MIN_PWM, DEF_MAX_PWM, 192, 1792);
     chanl_data[2] = map(chanl_pan, DEF_MIN_PWM, DEF_MAX_PWM, 192, 1792);
 }
 
