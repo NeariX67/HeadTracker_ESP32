@@ -26,6 +26,7 @@ const uint8_t LEDSEQ_DISCONNECTED[] = {50, 50};     // 500ms on, 500ms off.
 const uint8_t LEDSEQ_WIFI_UPDATE[] = {2, 3};        // 20ms on, 30ms off
 const uint8_t LEDSEQ_BINDING[] = {10, 10, 10, 100}; // 2x 100ms blink, 1s pause
 const uint8_t LEDSEQ_CONNECTED[] = {0xFF};          // solid on
+const uint8_t LEDSEQ_DISABLED[] = {100, 100};       // 330ms on, 330ms off
 
 typedef struct
 {
@@ -131,6 +132,10 @@ void led_update(void)
         case ota:
             led_effect.effect_array = LEDSEQ_WIFI_UPDATE;
             led_effect.effect_array_size = sizeof(LEDSEQ_WIFI_UPDATE);
+            break;
+        case disabled:
+            led_effect.effect_array = LEDSEQ_DISABLED;
+            led_effect.effect_array_size = sizeof(LEDSEQ_DISABLED);
             break;
         default:
             led_effect.effect_array = LEDSEQ_DISCONNECTED;

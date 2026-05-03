@@ -3,21 +3,24 @@
 #include <time.h>
 #include <string.h>
 #include <assert.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
-#include "freertos/timers.h"
-#include "nvs_flash.h"
-#include "esp_random.h"
+#include "app_espnow.h"
+#include "esp_crc.h"
 #include "esp_event.h"
-#include "esp_netif.h"
-#include "esp_wifi.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_mac.h"
+#include "esp_netif.h"
 #include "esp_now.h"
-#include "esp_crc.h"
-#include "app_espnow.h"
+#include "esp_random.h"
+#include "esp_system.h"
+#include "esp_wifi.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
+#include "freertos/timers.h"
 #include "msp.h"
 #include "msptypes.h"
+#include "nvs_flash.h"
 
 #include "trackersettings.h"
 #include "defines.h"
@@ -26,15 +29,19 @@
 #include "led.h"
 
 char *bytes_to_hex(const uint8_t *data, size_t len);
+void processMspPacket(mspPacket_t *packet);
+void printMem(int i);
+uint16_t map(uint16_t x, uint16_t in_min, uint16_t in_max, uint16_t out_min, uint16_t out_max);
 
 #define ESPNOW_QUEUE_SIZE 1
-#define ESPNOW_CHANNEL 1 // range 0 to 14
+#define ESPNOW_CHANNEL 0 // range 0 to 14
 
 static const char *TAG = "elrs";
 
 static TaskHandle_t Handle_elrs_task;
 static QueueHandle_t espnow_re_queue;
 static bool is_binding_mode = false;
+static bool is_headtracking_enabled = false;
 static bool binding_flag = false;
 static bool is_send_failed = false;
 static bool is_espnow_connected = false;
@@ -47,20 +54,20 @@ static uint8_t local_mac[ESP_NOW_ETH_ALEN] = {};
 
 void set_binding_flag(bool flag)
 {
-    ESP_LOGI(TAG, "set_binding_flag: %d", flag);
+    // ESP_LOGI(TAG, "set_binding_flag: %d", flag);
     binding_flag = flag;
 }
 
 bool isBinding(void)
 {
-    ESP_LOGI(TAG, "isBinding: %d", is_binding_mode);
+    // ESP_LOGI(TAG, "isBinding: %d", is_binding_mode);
     return is_binding_mode;
 }
 
 bool isconnected()
 {
-    ESP_LOGI(TAG, "isconnected: %d", is_espnow_connected);
-    return is_espnow_connected;
+    // ESP_LOGI(TAG, "isconnected: %d", is_espnow_connected);
+    return is_espnow_connected || !is_headtracking_enabled;
 }
 
 static void wifi_init(void)
@@ -70,20 +77,21 @@ static void wifi_init(void)
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_mac(WIFI_IF_STA, bind_phrase));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_FLASH));
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
-    ESP_ERROR_CHECK(esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE));
+    // ESP_ERROR_CHECK(esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_ABOVE));
     ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(80)); // 20dbm
                                                     // esp_wifi_disconnect();
-
-    esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
+#if ESPNOW_ENABLE_LONG_RANGE
+    ESP_ERROR_CHECK(esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR));
+#endif
 }
 
 static void espnow_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status)
 {
-    ESP_LOGI(TAG, "espnow_send_cb: %d", status);
+    // ESP_LOGI(TAG, "espnow_send_cb: %d", status);
     if (status)
     {
         is_send_failed = true;
@@ -92,16 +100,31 @@ static void espnow_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status
 
 static void espnow_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len)
 {
-    ESP_LOGI(TAG, "espnow_recv_cb");
+    // ESP_LOGI(TAG, "espnow_recv_cb");
+
+    ESP_LOGI(TAG, "<<< %s", bytes_to_hex(data, len));
+
+    msp_t msp;
+    msp_init(&msp);
+    for (int i = 0; i < len; i++)
+    {
+        if (msp_processReceivedByte(&msp, data[i]))
+        {
+            mspPacket_t *packet = msp_getReceivedPacket(&msp);
+            processMspPacket(packet);
+            msp_markPacketReceived(&msp);
+        }
+    }
+
     // TODO
 }
 
 void espnow_data_prepare(uint16_t chanl_roll, uint16_t chanl_till, uint16_t chanl_pan)
 {
     // ESP_LOGI(TAG, "espnow_data_prepare");
-    chanl_data[0] = chanl_roll;
-    chanl_data[1] = chanl_till;
-    chanl_data[2] = chanl_pan;
+    chanl_data[0] = map(chanl_roll, DEF_MIN_PWM, DEF_MAX_PWM, 192, 1792);
+    chanl_data[1] = map(chanl_till, DEF_MIN_PWM, DEF_MAX_PWM, 192, 1792);
+    chanl_data[2] = map(chanl_pan, DEF_MIN_PWM, DEF_MAX_PWM, 192, 1792);
 }
 
 #define ESPNOW_NVS_NAMESPACE "elrs"
@@ -194,12 +217,16 @@ uint8_t *esp_now_restore_peer(void)
 static void espnow_send_task()
 {
 
-    ESP_LOGI(TAG, "espnow_send_task");
+    // ESP_LOGI(TAG, "espnow_send_task");
 
     uint8_t *peer_addr;
     mspPacket_t frame;
     size_t data_len;
     TickType_t xLastWakeTime;
+
+    uint8_t packetSize = 15;
+    uint8_t data[packetSize];
+    uint8_t resultSize = 0;
 
     // TODO
 
@@ -226,6 +253,12 @@ static void espnow_send_task()
             xTaskDelayUntil(&xLastWakeTime, ESPNOW_SEND_PERIOD * 20);
             continue;
         }
+        if (!is_headtracking_enabled)
+        {
+            xTaskDelayUntil(&xLastWakeTime, ESPNOW_SEND_PERIOD * 20);
+            led_set_status(disabled);
+            continue;
+        }
 
         mspPacket_reset(&frame);
         mspPacket_makeCommand(&frame);
@@ -243,19 +276,26 @@ static void espnow_send_task()
         mspPacket_addByte(&frame, chanl_data[1] & 0xFF);
         mspPacket_addByte(&frame, (chanl_data[1] >> 8) & 0xFF);
 
-        uint8_t packetSize = msp_getTotalPacketSize(&frame);
-        uint8_t data[packetSize];
-        uint8_t result = msp_convertToByteArray(&frame, data);
-        if (!result)
+        resultSize = msp_convertToByteArray(&frame, data);
+        if (!resultSize)
         {
             ESP_LOGW(TAG, "msp_convertToByteArray failed");
             xTaskDelayUntil(&xLastWakeTime, ESPNOW_SEND_PERIOD * 20);
             continue;
         }
 
-        ESP_LOGI(TAG, "Sending %d bytes: %s", packetSize, bytes_to_hex(data, packetSize));
+        // char *data_hex = bytes_to_hex(data, resultSize);
+        // ESP_LOGI(TAG, ">>> %s", data_hex);
+        // free(data_hex);
 
-        esp_now_send(peer_addr, data, packetSize);
+        // ESP_LOGI(TAG, "Roll: %d, Tilt: %d, Pan: %d", chanl_data[0], chanl_data[1], chanl_data[2]);
+
+        esp_err_t err = esp_now_send(peer_addr, data, packetSize);
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG, "Error sending the data: %s", esp_err_to_name(err));
+            is_send_failed = true;
+        }
         if (is_send_failed)
         {
             // If send failed, delay 20 times of the period to reduce power consumption.
@@ -269,7 +309,7 @@ static void espnow_send_task()
         {
             is_espnow_connected = true;
             led_set_status(connected);
-            xTaskDelayUntil(&xLastWakeTime, ESPNOW_SEND_PERIOD * 10);
+            xTaskDelayUntil(&xLastWakeTime, ESPNOW_SEND_PERIOD);
         }
     }
 }
@@ -338,7 +378,7 @@ void ht_espnow_init(void)
     ESP_ERROR_CHECK(ret);
 
     // MAC address can only be set with unicast, so first byte must be even, not odd
-    bind_phrase[0] = bind_phrase[0] & ~0x01;
+    bind_phrase[0] &= ~0x01;
 
     esp_read_mac(local_mac, ESP_MAC_WIFI_STA);
     ESP_LOGI(TAG, "Local Mac: " MACSTR "", MAC2STR(local_mac));
@@ -372,8 +412,6 @@ void ht_espnow_deinit(void)
 }
 #endif
 
-#endif
-
 char *bytes_to_hex(const uint8_t *data, size_t len)
 {
     static const char hex_digits[] = "0123456789ABCDEF";
@@ -391,3 +429,37 @@ char *bytes_to_hex(const uint8_t *data, size_t len)
     out[len * 2] = '\0'; // Null-terminate
     return out;
 }
+
+void processMspPacket(mspPacket_t *packet)
+{
+    switch (packet->function)
+    {
+    case MSP_ELRS_BACKPACK_CRSF_TLM:
+        // IGNORE, we dont need to do anything with the telemetry data coming from the backpack for now
+        break;
+    case MSP_ELRS_BACKPACK_SET_HEAD_TRACKING:
+        ESP_LOGI(TAG, "Received MSP_ELRS_BACKPACK_SET_HEAD_TRACKING command");
+        ESP_LOGI(TAG, "Payload size: %d", packet->payloadSize);
+        is_headtracking_enabled = packet->payload[0] != 0;
+        break;
+    default:
+        ESP_LOGW(TAG, "Received unsupported packet function: %d", packet->function);
+        break;
+    }
+}
+
+void printMem(int i)
+{
+    size_t free_heap = esp_get_free_heap_size();
+    size_t min_free = esp_get_minimum_free_heap_size();
+
+    ESP_LOGI(TAG, "Memory usage (%d): free=%u bytes, min_free=%u bytes",
+             i, (unsigned)free_heap, (unsigned)min_free);
+}
+
+uint16_t map(uint16_t x, uint16_t in_min, uint16_t in_max, uint16_t out_min, uint16_t out_max)
+{
+    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
+#endif
