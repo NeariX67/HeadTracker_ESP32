@@ -17,6 +17,11 @@
 #include "Fusion.h"
 #include "icm42688.h"
 #include "trackersettings.h"
+#include "led.h"
+#include "ota.h"
+
+//--------------------Function Declarations--------------------
+extern void toggle_headtracking(void);
 
 //------------------------------------------------------------------------------
 // Defines
@@ -34,10 +39,11 @@ static spi_device_handle_t imu_dev;
 static spi_device_handle_t imu_dev;
 #endif
 
+// Install angle rotation
+#ifndef HT_NEARIX
 #define GOGGLE_G2 0
 #define GOGGLE_N3 1
 #define IMU_GOGGLE_PRESET GOGGLE_G2
-// Install angle rotation
 #if IMU_GOGGLE_PRESET == GOGGLE_G2
 const float R[3][3] = {
     {0.9816272, -0.1736482, 0.0868241},
@@ -48,7 +54,12 @@ const float R[3][3] = {
     {0, 0, -1},
     {1, 0, 0},
     {0, -1, 0}};
-
+#endif
+#else
+const float R[3][3] = {
+    {0, 0, 1},
+    {1, 0, 0},
+    {0, 1, 0}};
 #endif
 
 static TaskHandle_t imuTaskHandle;
@@ -226,11 +237,11 @@ void calculate_Thread(void *pvParameters)
     // Set AHRS algorithm settings
     const FusionAhrsSettings settings = {
         .convention = FusionConventionNwu,
-        .gain = 0.5f,
+        .gain = 2.0f,
         .gyroscopeRange = 1000.0f, /* replace this with actual gyroscope range in degrees/s */
         .accelerationRejection = 10.0f,
         .magneticRejection = 10.0f,
-        .recoveryTriggerPeriod = 5 * SAMPLE_RATE, /* 5 seconds */
+        .recoveryTriggerPeriod = SAMPLE_RATE, /* 5 seconds */
     };
     FusionAhrsSetSettings(&ahrs, &settings);
 
@@ -304,27 +315,27 @@ void calculate_Thread(void *pvParameters)
             tiltoffset = tilt;
             panoffset = pan;
             imuStatus.hold = 0; // recover output
+            ESP_LOGI(IMU_TAG, "Single Click Detected: Set current position as center");
         }
-        else if (isLongStart())
+        else if (isDoubleClick())
         {
-            switch (imuStatus.hold)
-            {
-            case IMU_RECOVER:
-                imuStatus.hold = IMU_HOLD;
-                imuStatus.eularHold.axis.roll = roll;
-                imuStatus.eularHold.axis.tilt = tilt;
-                imuStatus.eularHold.axis.pan = pan;
-                break;
-            case IMU_HOLD:
-                imuStatus.hold = IMU_RECOVER;
-                // Adjust offset to make the output from current position
-                rolloffset = roll - (imuStatus.eularHold.axis.roll - rolloffset);
-                tiltoffset = tilt - (imuStatus.eularHold.axis.tilt - tiltoffset);
-                panoffset = pan - (imuStatus.eularHold.axis.pan - panoffset);
-                break;
-            default:
-                break;
-            }
+            toggle_headtracking();
+            ESP_LOGI(IMU_TAG, "Double Click Detected");
+        }
+        else if (isLongPress2s())
+        {
+            set_binding_mode(true);
+            ESP_LOGI(IMU_TAG, "2s Long Click Detected");
+        }
+        else if (isLongPress5s())
+        {
+            ESP_LOGI(IMU_TAG, "5s Long Click Detected");
+            ht_espnow_deinit();
+            HttpOTA_server_init(); // OTA server init
+            set_OTA_Mode(true);
+            led_set_status(ota);
+            imu_Deinit(); // Delete IMU task and calculation task
+            return;
         }
 
         // Hold the output eular
@@ -337,13 +348,12 @@ void calculate_Thread(void *pvParameters)
 
         // Tilt output
         float tiltout =
-            (tilt - tiltoffset) * getTiltGain() * (isTiltReversed() ? -1.0 : 1.0);
+            normalize((tilt - tiltoffset), -180, 180) * getTiltGain() * (isTiltReversed() ? -1.0 : 1.0);
         uint16_t tiltout_ui = tiltout + getTiltCnt();                  // Apply Center Offset
         tiltout_ui = MAX(MIN(tiltout_ui, getTiltMax()), getTiltMin()); // Limit Output
 
         // Roll output
-        float rollout =
-            (roll - rolloffset) * getRollGain() * (isRollReversed() ? -1.0 : 1.0);
+        float rollout = normalize((roll - rolloffset), -180, 180) * getRollGain() * (isRollReversed() ? -1.0 : 1.0);
         uint16_t rollout_ui = rollout + getRollCnt();                  // Apply Center Offset
         rollout_ui = MAX(MIN(rollout_ui, getRollMax()), getRollMin()); // Limit Output
 
@@ -352,6 +362,11 @@ void calculate_Thread(void *pvParameters)
                        (isPanReversed() ? -1.0 : 1.0);
         uint16_t panout_ui = panout + getPanCnt();                 // Apply Center Offset
         panout_ui = MAX(MIN(panout_ui, getPanMax()), getPanMin()); // Limit Output
+
+        // ESP_LOGI(IMU_TAG, "Roll: %f, Tilt: %f, Pan: %f", roll, tilt, pan);
+        // ESP_LOGI(IMU_TAG, "Roll2: %f, Tilt2: %f, Pan2: %f", roll - rolloffset, tilt - tiltoffset, pan - panoffset);
+        // ESP_LOGI(IMU_TAG, "Rollout: %d, Tiltout: %d, Panout: %d", rollout_ui, tiltout_ui, panout_ui);
+        // ESP_LOGI(IMU_TAG, "Roll Offset: %f, Tilt Offset: %f, Pan Offset: %f", rolloffset, tiltoffset, panoffset);
 
         // // Reset on tilt
         // static bool doresetontilt = false;

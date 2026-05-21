@@ -29,9 +29,16 @@ static struct Button btn_touch;
 static struct Button btn_func;
 
 SemaphoreHandle_t btn_touch_single_click_sem = NULL;
+SemaphoreHandle_t btn_touch_double_click_sem = NULL;
 SemaphoreHandle_t btn_touch_long_start_sem = NULL;
+SemaphoreHandle_t btn_touch_long_5s_sem = NULL;
 SemaphoreHandle_t btn_func_single_click_sem = NULL;
 SemaphoreHandle_t btn_func_long_start_sem = NULL;
+
+static bool btn_touch_pressed = false;
+static uint32_t btn_touch_press_start_ms = 0;
+static bool btn_touch_long_2s_fired = false;
+static bool btn_touch_long_5s_fired = false;
 
 //------------------------------------------------------------------------------
 //--------------------Function Defines--------------------
@@ -90,16 +97,72 @@ static void BTN_TOUCH_SINGLE_Click_Handler(void *btn)
     }
 }
 
-static void BTN_TOUCH_LONG_PRESS_START_Handler(void *btn)
+static void BTN_TOUCH_DOUBLE_Click_Handler(void *btn)
 {
-    if (btn_touch_long_start_sem != NULL)
+    if (btn_touch_double_click_sem != NULL)
     {
-        // Bee long when center.
         if (!isBinding())
         {
-            buzzer_set_state(BUZZER_SINGLE, BUZZER_SINGLE_CLICK_MS * 5, 0);
+            buzzer_set_state(BUZZER_SINGLE, BUZZER_SINGLE_CLICK_MS, 0);
         }
-        xSemaphoreGive(btn_touch_long_start_sem);
+
+        xSemaphoreGive(btn_touch_double_click_sem);
+    }
+}
+
+static void BTN_TOUCH_PRESS_DOWN_Handler(void *btn)
+{
+    btn_touch_pressed = true;
+    btn_touch_press_start_ms = millis64();
+    btn_touch_long_2s_fired = false;
+    btn_touch_long_5s_fired = false;
+}
+
+static void BTN_TOUCH_PRESS_UP_Handler(void *btn)
+{
+    uint32_t elapsed_ms;
+
+    if (!btn_touch_pressed)
+    {
+        return;
+    }
+
+    elapsed_ms = millis64() - btn_touch_press_start_ms;
+
+    if (!btn_touch_long_5s_fired && !btn_touch_long_2s_fired && elapsed_ms >= 2000)
+    {
+        btn_touch_long_2s_fired = true;
+        if (btn_touch_long_start_sem != NULL)
+        {
+            if (!isBinding())
+            {
+                buzzer_set_state(BUZZER_SINGLE, BUZZER_SINGLE_CLICK_MS * 5, 0);
+            }
+            xSemaphoreGive(btn_touch_long_start_sem);
+        }
+    }
+
+    btn_touch_pressed = false;
+}
+
+static void BTN_TOUCH_LONG_PRESS_detect(void)
+{
+    uint32_t elapsed_ms;
+
+    if (!btn_touch_pressed)
+    {
+        return;
+    }
+
+    elapsed_ms = millis64() - btn_touch_press_start_ms;
+
+    if (!btn_touch_long_5s_fired && elapsed_ms >= 5000)
+    {
+        btn_touch_long_5s_fired = true;
+        if (btn_touch_long_5s_sem != NULL)
+        {
+            xSemaphoreGive(btn_touch_long_5s_sem);
+        }
     }
 }
 
@@ -179,15 +242,53 @@ bool isSingleClick(void)
 }
 
 /**
+ * @brief Did the center button double clicked?
+ * @retval true: button was double clicked.
+ * @retval false: button was NOT double clicked.
+ */
+bool isDoubleClick(void)
+{
+    if (btn_touch_double_click_sem != NULL)
+    {
+        return xSemaphoreTake(btn_touch_double_click_sem, 0) == pdTRUE;
+    }
+    return false;
+}
+
+/**
  * @brief Is the center button in long start status?
  * @retval true: button is in long start status.
  * @retval false: button is NOT in long start status.
  */
 bool isLongStart(void)
 {
+    return isLongPress2s();
+}
+
+/**
+ * @brief Is the center button in 2s long press status?
+ * @retval true: 2s long press event happened.
+ * @retval false: 2s long press event did NOT happen.
+ */
+bool isLongPress2s(void)
+{
     if (btn_touch_long_start_sem != NULL)
     {
         return xSemaphoreTake(btn_touch_long_start_sem, 0) == pdTRUE;
+    }
+    return false;
+}
+
+/**
+ * @brief Is the center button in 5s long press status?
+ * @retval true: 5s long press event happened.
+ * @retval false: 5s long press event did NOT happen.
+ */
+bool isLongPress5s(void)
+{
+    if (btn_touch_long_5s_sem != NULL)
+    {
+        return xSemaphoreTake(btn_touch_long_5s_sem, 0) == pdTRUE;
     }
     return false;
 }
@@ -198,6 +299,7 @@ void io_Thread(void *pvParameters)
     for (;;)
     {
         button_ticks(); // read button status
+        BTN_TOUCH_LONG_PRESS_detect();
         buzzer_update(TICKS_INTERVAL);
         led_update();
 #if defined HT_NANO || defined HT_NANO_V2
@@ -272,12 +374,30 @@ void io_Init(void)
             return;
         }
     }
+    if (btn_touch_double_click_sem == NULL)
+    {
+        btn_touch_double_click_sem = xSemaphoreCreateBinary();
+        if (btn_touch_double_click_sem == NULL)
+        {
+            ESP_LOGW(TAG, "btn_touch_double_click_sem create FAILED");
+            return;
+        }
+    }
     if (btn_touch_long_start_sem == NULL)
     {
         btn_touch_long_start_sem = xSemaphoreCreateBinary();
         if (btn_touch_long_start_sem == NULL)
         {
             ESP_LOGW(TAG, "btn_touch_long_start_sem create FAILED");
+            return;
+        }
+    }
+    if (btn_touch_long_5s_sem == NULL)
+    {
+        btn_touch_long_5s_sem = xSemaphoreCreateBinary();
+        if (btn_touch_long_5s_sem == NULL)
+        {
+            ESP_LOGW(TAG, "btn_touch_long_5s_sem create FAILED");
             return;
         }
     }
@@ -305,8 +425,10 @@ void io_Init(void)
     // initialize button function
     //  center button
     button_init(&btn_touch, read_button_GPIO, 1, btn_touch_id);
+    button_attach(&btn_touch, PRESS_DOWN, BTN_TOUCH_PRESS_DOWN_Handler);
+    button_attach(&btn_touch, PRESS_UP, BTN_TOUCH_PRESS_UP_Handler);
     button_attach(&btn_touch, SINGLE_CLICK, BTN_TOUCH_SINGLE_Click_Handler);
-    button_attach(&btn_touch, LONG_PRESS_START, BTN_TOUCH_LONG_PRESS_START_Handler);
+    button_attach(&btn_touch, DOUBLE_CLICK, BTN_TOUCH_DOUBLE_Click_Handler);
     button_start(&btn_touch);
 #if defined HT_NANO || defined HT_NANO_V2
     // function button

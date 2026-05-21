@@ -37,7 +37,7 @@
 #define ESPNOW_THREAD_STACK_SIZE configMINIMAL_STACK_SIZE*5
 
 // Thread period in milisecond
-#define IMU_THREAD_PERIOD   10
+#define IMU_THREAD_PERIOD   5
 #define CAL_THREAD_PERIOD   10
 #define BT_THREAD_PERIOD    8
 #define ESPNOW_SEND_PERIOD  10
