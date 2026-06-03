@@ -73,6 +73,7 @@ static FusionVector gyr = {0};  // in d/s
 static FusionVector mag = {0};  // in guss
 static float tilt = 0, roll = 0, pan = 0;
 static float rolloffset = 0, panoffset = 0, tiltoffset = 0; // Center offset, used when pressed center button
+static volatile bool recenter_requested = false;
 
 static uint16_t channel_data[MAX_CHANNELS] = {PPM_CENTER}; // Range 0-2500
 
@@ -83,6 +84,19 @@ static ImuStatus imuStatus = {
 };
 
 static SemaphoreHandle_t calculateThreadRunSignal = NULL;
+
+static inline void imu_recenter_now(void)
+{
+    rolloffset = roll;
+    tiltoffset = tilt;
+    panoffset = pan;
+    imuStatus.hold = 0; // recover output
+}
+
+void imu_request_recenter(void)
+{
+    recenter_requested = true;
+}
 //------------------------------------------------------------------------------
 //--------------------Function Defines--------------------
 
@@ -311,10 +325,7 @@ void calculate_Thread(void *pvParameters)
         // Zero button was pressed, adjust all values to zero
         if (isSingleClick())
         {
-            rolloffset = roll;
-            tiltoffset = tilt;
-            panoffset = pan;
-            imuStatus.hold = 0; // recover output
+            imu_recenter_now();
             ESP_LOGI(IMU_TAG, "Single Click Detected: Set current position as center");
         }
         else if (isDoubleClick())
@@ -336,6 +347,13 @@ void calculate_Thread(void *pvParameters)
             led_set_status(ota);
             imu_Deinit(); // Delete IMU task and calculation task
             return;
+        }
+
+        if (recenter_requested)
+        {
+            imu_recenter_now();
+            recenter_requested = false;
+            ESP_LOGI(IMU_TAG, "Recenter requested: Set current position as center");
         }
 
         // Hold the output eular

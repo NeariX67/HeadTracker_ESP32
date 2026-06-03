@@ -27,6 +27,9 @@
 #include "buzzer.h"
 #include "crc8.h"
 #include "led.h"
+#ifdef HEADTRACKER
+#include "imu.h"
+#endif
 
 char *bytes_to_hex(const uint8_t *data, size_t len);
 void processMspPacket(mspPacket_t *packet, const esp_now_recv_info_t *recv_info);
@@ -483,7 +486,22 @@ void processMspPacket(mspPacket_t *packet, const esp_now_recv_info_t *recv_info)
     case MSP_ELRS_BACKPACK_SET_HEAD_TRACKING:
         ESP_LOGI(TAG, "Received MSP_ELRS_BACKPACK_SET_HEAD_TRACKING command");
         ESP_LOGI(TAG, "Payload size: %d", packet->payloadSize);
-        is_headtracking_enabled = packet->payload[0] != 0;
+        if (packet->payloadSize > 0)
+        {
+            bool was_enabled = is_headtracking_enabled;
+            is_headtracking_enabled = packet->payload[0] != 0;
+#ifdef HEADTRACKER
+            if (!was_enabled && is_headtracking_enabled)
+            {
+                imu_request_recenter();
+                ESP_LOGI(TAG, "Headtracking enabled: requested IMU recenter");
+            }
+#endif
+        }
+        else
+        {
+            ESP_LOGW(TAG, "Headtracking command payload too short");
+        }
         break;
     case MSP_ELRS_BIND:
         ESP_LOGI(TAG, "Received MSP_ELRS_BIND command");

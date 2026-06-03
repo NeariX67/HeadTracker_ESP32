@@ -41,6 +41,7 @@ typedef struct
  */
 void getChannelData(uint16_t *buffer);
 float normalize(const float value, const float start, const float end);
+void imu_request_recenter(void);
 
 int imu_Init(void);
 void imu_Thread(void *pvParameters);
