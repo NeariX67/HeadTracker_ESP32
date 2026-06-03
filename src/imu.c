@@ -74,6 +74,7 @@ static FusionVector mag = {0};  // in guss
 static float tilt = 0, roll = 0, pan = 0;
 static float rolloffset = 0, panoffset = 0, tiltoffset = 0; // Center offset, used when pressed center button
 static volatile bool recenter_requested = false;
+static volatile bool ota_mode_requested = false;
 
 static uint16_t channel_data[MAX_CHANNELS] = {PPM_CENTER}; // Range 0-2500
 
@@ -96,6 +97,20 @@ static inline void imu_recenter_now(void)
 void imu_request_recenter(void)
 {
     recenter_requested = true;
+}
+
+void imu_request_ota_mode(void)
+{
+    ota_mode_requested = true;
+}
+
+void imu_enable_ota_mode(void)
+{
+    ht_espnow_deinit();
+    HttpOTA_server_init(); // OTA server init
+    set_OTA_Mode(true);
+    led_set_status(ota);
+    imu_Deinit(); // Delete IMU task and calculation task
 }
 //------------------------------------------------------------------------------
 //--------------------Function Defines--------------------
@@ -341,11 +356,7 @@ void calculate_Thread(void *pvParameters)
         else if (isLongPress5s())
         {
             ESP_LOGI(IMU_TAG, "5s Long Click Detected");
-            ht_espnow_deinit();
-            HttpOTA_server_init(); // OTA server init
-            set_OTA_Mode(true);
-            led_set_status(ota);
-            imu_Deinit(); // Delete IMU task and calculation task
+            imu_enable_ota_mode();
             return;
         }
 
@@ -354,6 +365,14 @@ void calculate_Thread(void *pvParameters)
             imu_recenter_now();
             recenter_requested = false;
             ESP_LOGI(IMU_TAG, "Recenter requested: Set current position as center");
+        }
+
+        if (ota_mode_requested)
+        {
+            ota_mode_requested = false;
+            ESP_LOGI(IMU_TAG, "OTA mode requested");
+            imu_enable_ota_mode();
+            return;
         }
 
         // Hold the output eular

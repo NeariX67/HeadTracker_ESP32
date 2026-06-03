@@ -531,6 +531,13 @@ void processMspPacket(mspPacket_t *packet, const esp_now_recv_info_t *recv_info)
             ESP_LOGW(TAG, "Not in binding mode, ignoring bind command.");
         }
         break;
+    case MSP_ELRS_SET_VRX_BACKPACK_WIFI_MODE:
+        ESP_LOGI(TAG, "Received MSP_ELRS_SET_VRX_BACKPACK_WIFI_MODE command");
+#ifdef HEADTRACKER
+        imu_request_ota_mode();
+#endif
+
+        break;
     default:
         ESP_LOGW(TAG, "Received unsupported packet function: %d", packet->function);
         break;
