@@ -5,6 +5,7 @@
 
 #include "buzzer.h"
 #include "ht.h"
+#include "ota.h"
 
 #define LEDC_TIMER LEDC_TIMER_0
 #define LEDC_MODE LEDC_LOW_SPEED_MODE
@@ -33,6 +34,39 @@ static buzzer_t buzzer = {
     .off_time_ms = 0,
     .elapsed_time_ms = 0,
     .is_on = false};
+
+#define OTA_LED_FADE_STEP_MS 15
+#define OTA_LED_FADE_STEP_DUTY 128
+
+static void ota_led_fade_update(uint32_t delta_time_ms)
+{
+    static int32_t duty = 0;
+    static int8_t direction = 1;
+    static uint32_t elapsed_ms = 0;
+
+    elapsed_ms += delta_time_ms;
+    if (elapsed_ms < OTA_LED_FADE_STEP_MS)
+    {
+        return;
+    }
+    elapsed_ms = 0;
+
+    duty += direction * OTA_LED_FADE_STEP_DUTY;
+    if (duty >= LEDC_DUTY)
+    {
+        duty = LEDC_DUTY;
+        direction = -1;
+    }
+    else if (duty <= 0)
+    {
+        duty = 0;
+        direction = 1;
+    }
+
+    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, (uint32_t)duty);
+    ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
+    buzzer.is_on = (duty > 0);
+}
 
 // Set the buzzer peripheral configuration
 void buzzer_init(void)
@@ -122,6 +156,27 @@ void buzzer_play_tone_sequence(const buzzer_tone_t *tones, size_t tone_count)
  */
 void buzzer_update(uint32_t delta_time_ms)
 {
+    static bool ota_mode_last = false;
+
+    if (get_OTA_Mode())
+    {
+        if (!ota_mode_last)
+        {
+            // Enter OTA LED mode: stop any tone/beep sequence first.
+            tone_sequence.tones = NULL;
+            tone_sequence.tone_count = 0;
+            tone_sequence.current_tone = 0;
+            tone_sequence.elapsed_time_ms = 0;
+            buzzer.state = BUZZER_OFF;
+            buzzer.elapsed_time_ms = 0;
+            ledc_set_freq(LEDC_MODE, LEDC_TIMER, LEDC_FREQUENCY);
+        }
+        ota_mode_last = true;
+        ota_led_fade_update(delta_time_ms);
+        return;
+    }
+    ota_mode_last = false;
+
     buzzer.elapsed_time_ms += delta_time_ms; // Accumulate elapsed time
 
     if (tone_sequence.tones && tone_sequence.current_tone < tone_sequence.tone_count)
